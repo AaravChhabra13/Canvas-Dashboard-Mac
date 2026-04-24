@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import axios from 'axios'
 import type { Assignment, Course } from '../src/shared/types'
 import { getToken, fetchCoursesFromApi, fetchPlannerItems } from './canvasApi'
+import { fetchAssignmentsViaGraphQL } from './graphqlApi'
 
 // ical.js is CJS; use createRequire so Rollup passes it through at runtime
 const _require = createRequire(import.meta.url)
@@ -25,6 +26,7 @@ function mergeCourses(fresh: Course[], stored: Course[]): Course[] {
 export async function syncAll(
   baseUrl: string,
   icalUrl: string,
+  sessionCookie: string,
   lookaheadDays: number,
   storedCourses: Course[],
 ): Promise<SyncResult> {
@@ -35,6 +37,15 @@ export async function syncAll(
     const mergedCourses = mergeCourses(freshCourses, storedCourses)
     const assignments = await fetchPlannerItems(baseUrl, token, lookaheadDays, mergedCourses)
     return { assignments, courses: mergedCourses }
+  }
+
+  if (sessionCookie) {
+    try {
+      const result = await fetchAssignmentsViaGraphQL(baseUrl, sessionCookie, lookaheadDays, storedCourses)
+      return { assignments: result.assignments, courses: mergeCourses(result.courses, storedCourses) }
+    } catch (e) {
+      console.error('GraphQL sync failed, falling back to iCal:', e instanceof Error ? e.message : e)
+    }
   }
 
   if (icalUrl) {

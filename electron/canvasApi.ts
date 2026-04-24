@@ -1,24 +1,31 @@
-import { safeStorage } from 'electron'
+import { safeStorage, app } from 'electron'
 import Store from 'electron-store'
 import axios from 'axios'
 import type { Assignment, Course } from '../src/shared/types'
 
-// Separate store file (token.json in userData) — never co-mingled with settings
-const tokenStore = new Store<{ encryptedToken: string }>({
-  name: 'token',
-  defaults: { encryptedToken: '' },
-})
+// Lazily-initialized so app.getPath() is not called before app.ready
+let _tokenStore: Store<{ encryptedToken: string }> | null = null
+function tokenStore(): Store<{ encryptedToken: string }> {
+  if (!_tokenStore) {
+    _tokenStore = new Store<{ encryptedToken: string }>({ name: "token", 
+      name: 'token',
+      cwd: app.getPath('userData'),
+      defaults: { encryptedToken: '' },
+    })
+  }
+  return _tokenStore
+}
 
 // safeStorage uses the OS login keychain for its encryption key, so the hex
 // blob on disk is meaningless without the OS account — same security model as keytar.
 export function saveToken(token: string): void {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('safeStorage unavailable')
   const buf = safeStorage.encryptString(token)
-  tokenStore.set('encryptedToken', buf.toString('hex'))
+  tokenStore().set('encryptedToken', buf.toString('hex'))
 }
 
 export function getToken(): string | null {
-  const hex = tokenStore.get('encryptedToken')
+  const hex = tokenStore().get('encryptedToken')
   if (!hex) return null
   if (!safeStorage.isEncryptionAvailable()) return null
   try {
@@ -29,7 +36,7 @@ export function getToken(): string | null {
 }
 
 export function deleteToken(): void {
-  tokenStore.set('encryptedToken', '')
+  tokenStore().set('encryptedToken', '')
 }
 
 export function hasToken(): boolean {

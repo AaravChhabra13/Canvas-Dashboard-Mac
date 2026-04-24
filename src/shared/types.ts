@@ -10,7 +10,14 @@ export interface Assignment {
   pointsPossible: number | null
   canvasUrl: string
   isOverdue: boolean
-  source: 'rest' | 'ical'
+  source: 'rest' | 'ical' | 'graphql' | 'manual'
+}
+
+export interface PersonalTask {
+  id: string
+  title: string
+  dueAt: string | null
+  createdAt: string
 }
 
 export interface BucketedAssignments {
@@ -40,6 +47,7 @@ export interface Course {
 export interface Settings {
   canvasBaseUrl: string
   canvasIcalUrl: string
+  canvasSessionCookie: string
   syncIntervalMinutes: number
   lookaheadDays: number
   notificationLeadTimes: number[]  // minutes before due date (e.g. 1440=24h, 120=2h, 30=30min)

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, nativeImage, screen, powerMonitor } from 'electron'
+import { app, BrowserWindow, Tray, nativeImage, nativeTheme, screen, powerMonitor } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { setupIPC, isOnboarded } from './ipc'
@@ -18,28 +18,71 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 let tray: Tray | null = null
 let panel: BrowserWindow | null = null
 let onboardingWin: BrowserWindow | null = null
-// Timestamp of last blur-close; avoids re-opening on the same tray click that closes
 let lastBlurTime = 0
+let currentOverdue = 0
+let currentToday = 0
 
-function makeTrayIcon(): Electron.NativeImage {
-  // 16×16 BGRA bitmap — all-black pixels, full alpha → macOS inverts for dark bar
+// ── Tray icon ─────────────────────────────────────────────────────────────────
+
+function makeTrayIcon(overdue = 0, today = 0): Electron.NativeImage {
   const size = 16
+  const total = overdue + today
   const buf = Buffer.alloc(size * size * 4, 0)
-  for (let i = 0; i < size * size; i++) buf[i * 4 + 3] = 255
+
+  if (total === 0) {
+    // Plain template image: all-black pixels, auto-inverts for dark menu bar
+    for (let i = 0; i < size * size; i++) buf[i * 4 + 3] = 255
+    const img = nativeImage.createFromBitmap(buf, { width: size, height: size })
+    img.setTemplateImage(true)
+    return img
+  }
+
+  // Base icon: black or white depending on menu bar appearance
+  const luma = nativeTheme.shouldUseDarkColors ? 255 : 0
+  for (let y = 3; y < size; y++) {
+    for (let x = 0; x < 11; x++) {
+      const idx = (y * size + x) * 4
+      // BGRA
+      buf[idx] = luma; buf[idx + 1] = luma; buf[idx + 2] = luma; buf[idx + 3] = 220
+    }
+  }
+
+  // Colored badge circle in top-right corner
+  // #ef4444 (red) BGRA: 68,68,239,255 — #f97316 (orange) BGRA: 22,115,249,255
+  const [bv, gv, rv] = overdue > 0 ? [68, 68, 239] : [22, 115, 249]
+  const cx = 12, cy = 4, r = 3.5
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (Math.sqrt((x - cx) ** 2 + (y - cy) ** 2) <= r) {
+        const idx = (y * size + x) * 4
+        buf[idx] = bv; buf[idx + 1] = gv; buf[idx + 2] = rv; buf[idx + 3] = 255
+      }
+    }
+  }
+
   const img = nativeImage.createFromBitmap(buf, { width: size, height: size })
-  img.setTemplateImage(true)
+  img.setTemplateImage(false)
   return img
 }
+
+function updateTrayIcon(): void {
+  if (tray) tray.setImage(makeTrayIcon(currentOverdue, currentToday))
+}
+
+// ── Windows ───────────────────────────────────────────────────────────────────
 
 function createPanel(): void {
   panel = new BrowserWindow({
     width: 340,
-    height: 480,
+    height: 520,
     show: false,
     frame: false,
     resizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
+    transparent: true,
+    vibrancy: 'under-window',
+    visualEffectState: 'active',
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true,
@@ -102,6 +145,8 @@ function createOnboardingWindow(): void {
   onboardingWin.on('closed', () => { onboardingWin = null })
 }
 
+// ── Panel positioning ─────────────────────────────────────────────────────────
+
 function showPanel(): void {
   if (!panel || !tray) return
 
@@ -124,11 +169,11 @@ function showPanel(): void {
 
 function togglePanel(): void {
   if (!panel) return
-  // If we hid via blur in the last 200 ms the click was on the tray icon that
-  // caused the blur — don't reopen immediately.
   if (Date.now() - lastBlurTime < 200) return
   panel.isVisible() ? panel.hide() : showPanel()
 }
+
+// ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin') app.dock.hide()
@@ -137,18 +182,25 @@ app.whenReady().then(() => {
   tray.setToolTip('Canvas Dashboard')
   tray.on('click', togglePanel)
 
+  // Regenerate icon when menu bar appearance changes
+  nativeTheme.on('updated', updateTrayIcon)
+
   createPanel()
 
   const { triggerSync, isOnboardingComplete } = setupIPC(panel!, {
     showPanel: () => showPanel(),
     closeOnboarding: () => { onboardingWin?.close(); onboardingWin = null },
+    onBadgeUpdate: (overdue, today) => {
+      currentOverdue = overdue
+      currentToday = today
+      updateTrayIcon()
+    },
   })
 
   if (!isOnboardingComplete) {
     createOnboardingWindow()
   }
 
-  // On wake from sleep: sync only if the user has finished onboarding
   powerMonitor.on('resume', () => {
     if (isOnboarded()) triggerSync()
     panel?.webContents.send('panel:shown')
@@ -157,5 +209,4 @@ app.whenReady().then(() => {
   app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true })
 })
 
-// Keep alive in menu bar — do not quit when all windows are closed
-app.on('window-all-closed', () => { /* intentionally empty */ })
+app.on('window-all-closed', () => { /* intentionally empty — keep alive in menu bar */ })

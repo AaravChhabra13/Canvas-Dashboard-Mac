@@ -1,21 +1,31 @@
-import { useState, CSSProperties } from 'react'
+import { useState, useEffect, CSSProperties } from 'react'
 
 type Step = 1 | 2 | 3 | 4 | 5
 
-// ── Shared styles ────────────────────────────────────────────────────────────
+// ── Dark mode ─────────────────────────────────────────────────────────────────
 
-const root: CSSProperties = {
-  width: '100vw',
-  height: '100vh',
-  display: 'flex',
-  flexDirection: 'column',
-  background: 'rgba(249,249,249,0.97)',
-  backdropFilter: 'blur(20px)',
-  WebkitBackdropFilter: 'blur(20px)',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif',
-  WebkitUserSelect: 'none',
-  userSelect: 'none',
-  overflow: 'hidden',
+function useIsDark(): boolean {
+  const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const h = (e: MediaQueryListEvent) => setDark(e.matches)
+    mq.addEventListener('change', h)
+    return () => mq.removeEventListener('change', h)
+  }, [])
+  return dark
+}
+
+// ── Shared styles ─────────────────────────────────────────────────────────────
+
+function makeRoot(dark: boolean): CSSProperties {
+  return {
+    width: '100vw', height: '100vh',
+    display: 'flex', flexDirection: 'column',
+    background: dark ? 'rgba(22,22,26,0.97)' : 'rgba(249,249,249,0.97)',
+    backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif',
+    WebkitUserSelect: 'none', userSelect: 'none', overflow: 'hidden',
+  }
 }
 
 // Title bar acts as drag handle so the frameless window is movable
@@ -27,71 +37,45 @@ const titleBar = {
 } as CSSProperties
 
 const body: CSSProperties = {
-  flex: 1,
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '0 40px 32px',
-  gap: 0,
+  flex: 1, display: 'flex', flexDirection: 'column',
+  alignItems: 'center', justifyContent: 'center',
+  padding: '0 40px 32px', gap: 0,
 }
 
-const heading: CSSProperties = {
-  fontSize: 20,
-  fontWeight: 700,
-  color: '#111',
-  marginBottom: 8,
-  textAlign: 'center',
+function makeHeading(dark: boolean): CSSProperties {
+  return { fontSize: 20, fontWeight: 700, color: dark ? '#f0f0f0' : '#111', marginBottom: 8, textAlign: 'center' }
 }
 
-const subtext: CSSProperties = {
-  fontSize: 13,
-  color: '#666',
-  textAlign: 'center',
-  lineHeight: 1.5,
-  marginBottom: 24,
+function makeSubtext(dark: boolean): CSSProperties {
+  return { fontSize: 13, color: dark ? '#999' : '#666', textAlign: 'center', lineHeight: 1.5, marginBottom: 24 }
 }
 
-function inputStyle(extra?: CSSProperties): CSSProperties {
+function inputStyle(dark: boolean, extra?: CSSProperties): CSSProperties {
   return {
-    width: '100%',
-    fontSize: 13,
-    padding: '8px 10px',
-    border: '1px solid #d1d5db',
-    borderRadius: 7,
-    outline: 'none',
-    background: '#fff',
-    color: '#111',
-    boxSizing: 'border-box',
-    WebkitUserSelect: 'text' as never,
+    width: '100%', fontSize: 13, padding: '8px 10px',
+    border: `1px solid ${dark ? 'rgba(255,255,255,0.15)' : '#d1d5db'}`,
+    borderRadius: 7, outline: 'none',
+    background: dark ? 'rgba(55,55,62,0.95)' : '#fff',
+    color: dark ? '#f0f0f0' : '#111',
+    boxSizing: 'border-box', WebkitUserSelect: 'text' as never,
     ...extra,
   }
 }
 
 function btnPrimary(disabled = false): CSSProperties {
   return {
-    width: '100%',
-    padding: '9px 0',
-    fontSize: 13,
-    fontWeight: 600,
+    width: '100%', padding: '9px 0', fontSize: 13, fontWeight: 600,
     background: disabled ? '#93c5fd' : '#3b82f6',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 7,
-    cursor: disabled ? 'default' : 'pointer',
-    marginTop: 10,
+    color: '#fff', border: 'none', borderRadius: 7,
+    cursor: disabled ? 'default' : 'pointer', marginTop: 10,
   }
 }
 
-function btnSecondary(): CSSProperties {
+function btnSecondary(dark: boolean): CSSProperties {
   return {
-    background: 'none',
-    border: 'none',
-    fontSize: 12,
-    color: '#9ca3af',
-    cursor: 'pointer',
-    marginTop: 8,
-    padding: '4px 0',
+    background: 'none', border: 'none', fontSize: 12,
+    color: dark ? '#666' : '#9ca3af',
+    cursor: 'pointer', marginTop: 8, padding: '4px 0',
   }
 }
 
@@ -183,6 +167,12 @@ export default function Onboarding() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
+  const dark = useIsDark()
+  const root = makeRoot(dark)
+  const heading = makeHeading(dark)
+  const subtext = makeSubtext(dark)
+  const mutedColor = dark ? '#666' : '#9ca3af'
+
   return (
     <div style={root}>
       <div style={titleBar} />
@@ -211,7 +201,7 @@ export default function Onboarding() {
               Your school's Canvas address. UW students can leave this as-is.
             </div>
             <input
-              style={inputStyle()}
+              style={inputStyle(dark)}
               type="url"
               value={baseUrl}
               onChange={e => setBaseUrl(e.target.value)}
@@ -246,7 +236,7 @@ export default function Onboarding() {
 
             <div style={{ width: '100%', position: 'relative' }}>
               <input
-                style={inputStyle({ paddingRight: 60 })}
+                style={inputStyle(dark, { paddingRight: 60 })}
                 type={showToken ? 'text' : 'password'}
                 value={token}
                 onChange={e => { setToken(e.target.value); setTokenStatus('idle') }}
@@ -259,7 +249,7 @@ export default function Onboarding() {
                   position: 'absolute', right: 8, top: '50%',
                   transform: 'translateY(-50%)',
                   background: 'none', border: 'none', cursor: 'pointer',
-                  fontSize: 11, color: '#9ca3af',
+                  fontSize: 11, color: mutedColor,
                   WebkitUserSelect: 'none' as never,
                 }}
               >
@@ -292,7 +282,7 @@ export default function Onboarding() {
               </button>
             )}
 
-            <button style={btnSecondary()} onClick={() => setStep(4)}>
+            <button style={btnSecondary(dark)} onClick={() => setStep(4)}>
               Skip — use iCal feed instead
             </button>
           </>
