@@ -1,0 +1,375 @@
+
+TECHNICAL REQUIREMENTS DOCUMENT
+
+Canvas Assignment Dashboard
+Mac Menu Bar App
+
+Version	1.0 — Draft
+Date	April 2026
+Author	Aarav Chhabra
+Status	In Review
+Based on	Canvas Dashboard PRD v1.0
+
+This document translates the Canvas Dashboard PRD into concrete technical decisions, system architecture, API contracts, and implementation specifications for the macOS menu bar application.
+ 
+1. System Overview
+The Canvas Assignment Dashboard is a native-feeling macOS utility that periodically fetches assignment data from the UW Canvas LMS and surfaces it passively in the menu bar. The app runs as a background process, auto-starts on login, and renders a dropdown panel on click.
+
+1.1 Architecture Summary
+The app is structured as three loosely coupled layers:
+
+Layer	Responsibility
+Data layer	Canvas API / iCal sync, caching, background refresh scheduling
+State layer	In-memory assignment store, urgency bucketing, course metadata
+UI layer	Menu bar icon, dropdown panel, macOS notifications, settings window
+
+1.2 Technology Stack
+Component	Choice & Rationale
+Runtime	Electron 30 + Node.js 20 LTS — fastest path to a working app using web tech; avoids Swift learning curve for MVP
+UI framework	React 18 + TypeScript — typed component model, good ecosystem, fast iteration
+Styling	Tailwind CSS — utility classes, no CSS file sprawl
+Build tool	Vite + electron-vite — fast HMR in dev, tree-shaking for prod
+Packaging	electron-builder — produces .dmg installer and .app bundle
+Credential storage	keytar (native Keychain bridge) — stores Canvas token securely
+HTTP client	Axios — interceptors for rate limiting, retry logic
+iCal parser	ical.js — RFC 5545 compliant, well-maintained
+Scheduling	node-cron + Electron wake events — drives background syncs
+Persistence	electron-store (JSON on disk) — settings, course colors, cached data
+Notifications	Electron's Notification API (wraps macOS UNUserNotificationCenter)
+Testing	Vitest (unit), Playwright (e2e Electron)
+
+1.3 Non-Functional Requirements
+Requirement	Target
+Startup time (cold)	< 3 seconds to menu bar icon visible
+Sync latency on wake	First refresh completes within 10 seconds of wake event
+Memory footprint	< 120 MB RAM at steady state (Electron baseline ~80 MB)
+CPU usage (idle)	< 1% CPU between sync cycles
+Disk usage	< 250 MB installed (including Electron runtime)
+API rate limit compliance	Never poll Canvas REST API more than once per 5 minutes
+Token security	Canvas token stored only in macOS Keychain; never written to disk in plaintext
+macOS compatibility	macOS 13 Ventura and later (Electron 30 minimum)
+Offline behavior	App remains functional with stale cached data when network is unavailable; shows last-sync timestamp
+ 
+2. Canvas API Integration
+2.1 Authentication
+The app uses a Canvas Personal Access Token (PAT). The user generates this once inside Canvas (Account > Settings > Approved Integrations > New Access Token). The token is stored in macOS Keychain via keytar and retrieved at runtime — it is never written to disk or logged.
+
+keytar.setPassword('canvas-dashboard', 'canvas-token', token)
+const token = await keytar.getPassword('canvas-dashboard', 'canvas-token')
+
+2.2 Base URL Configuration
+The Canvas instance URL is user-configurable (defaults to https://canvas.uw.edu). Stored in electron-store under settings.canvasBaseUrl. All API calls are prefixed with this URL.
+
+2.3 REST API Endpoints
+The following Canvas REST API endpoints are used. All require Authorization: Bearer <token> header.
+
+Endpoint	Used for	Refresh interval
+GET /api/v1/courses?enrollment_state=active	Fetch active courses and metadata	On launch + hourly
+GET /api/v1/planner/items?per_page=50&start_date=<now>	Unified assignment/quiz/discussion feed	Every 30 min + on wake
+GET /api/v1/courses/:id/assignments?bucket=upcoming	Per-course assignment detail fallback	On demand
+GET /api/v1/users/self/upcoming_events	Upcoming events (alternative planner view)	Every 30 min
+
+2.4 iCal Feed (MVP Path)
+For the initial MVP, the app can use the Canvas calendar iCal feed instead of the REST API. The user pastes their feed URL (found at Canvas > Calendar > Calendar Feed). This avoids token setup friction but loses submission status.
+
+https://canvas.uw.edu/feeds/calendars/user_<hash>.ics
+
+The iCal feed is fetched with a plain HTTP GET (no auth required). Parsed with ical.js. Events with DTSTART within the lookahead window are surfaced as assignments. SUMMARY maps to assignment title; DESCRIPTION may include course name and a Canvas link.
+
+2.5 Rate Limiting & Error Handling
+Scenario	Handling
+HTTP 403 / 401	Clear stored token, show re-auth prompt in settings panel
+HTTP 429 (rate limited)	Exponential backoff: wait 60s, 120s, 240s before retry; show warning badge
+HTTP 5xx	Retry up to 3 times with 10s delay; fall back to cached data; log error
+Network offline	Skip sync cycle; display 'Offline — showing cached data' in panel footer
+iCal parse error	Log malformed event, skip it, continue parsing rest of feed
+Token missing	Block sync; show onboarding prompt; never crash
+ 
+3. Data Model
+3.1 Assignment Object
+The canonical in-memory assignment object used across the app:
+
+interface Assignment {
+  id: string                    // Canvas assignment ID or iCal UID
+  title: string                 // Assignment name
+  courseId: string
+  courseName: string
+  courseColor: string           // Hex color, user-configurable
+  dueAt: Date | null            // null = no due date
+  type: 'assignment' | 'quiz' | 'discussion' | 'announcement'
+  submissionState: 'submitted' | 'unsubmitted' | 'graded' | 'unknown'
+  pointsPossible: number | null
+  canvasUrl: string             // Direct link to assignment page
+  isOverdue: boolean            // dueAt < now && not submitted
+  source: 'rest' | 'ical'       // Where data originated
+}
+
+3.2 Urgency Buckets
+Assignments are bucketed at render time based on dueAt relative to the current timestamp:
+
+Bucket	Condition
+Overdue	dueAt < now && submissionState !== 'submitted'
+Due today	dueAt is between now and end of today (midnight)
+Due tomorrow	dueAt falls on the next calendar day
+This week	dueAt within 7 days but not today or tomorrow
+Coming up	dueAt > 7 days from now (shown up to lookahead window setting)
+No due date	dueAt is null — shown at bottom with muted treatment
+
+3.3 Persistence (electron-store)
+The following keys are persisted to disk using electron-store (JSON file in the app's userData directory):
+
+Key	Contents
+settings.canvasBaseUrl	Canvas instance URL string
+settings.syncIntervalMinutes	Number (default: 30)
+settings.lookaheadDays	Number (default: 14)
+settings.notificationLeadTimes	Array of minutes before due date to fire notification
+courses	Array of Course objects (id, name, color, hidden)
+assignmentsCache	Array of Assignment objects from last successful sync
+lastSyncAt	ISO timestamp string
+onboardingComplete	Boolean
+
+The Canvas token is NOT stored here — it lives exclusively in macOS Keychain.
+ 
+4. Background Sync Engine
+4.1 Sync Triggers
+Trigger	Implementation
+App launch	Sync fires immediately after startup, before first render
+Timer (every N minutes)	node-cron job running in main process; interval from settings.syncIntervalMinutes
+macOS wake from sleep	Electron powerMonitor 'resume' event triggers immediate sync
+Manual refresh	User clicks refresh icon in panel; fires ad-hoc sync
+Settings change	Changing canvas URL or token triggers immediate re-sync
+
+4.2 Sync Flow
+Each sync cycle follows this sequence:
+
+•	Set syncStatus = 'syncing'; update tray icon to spinner variant
+•	Fetch active courses via GET /api/v1/courses
+•	Fetch planner items via GET /api/v1/planner/items (paginated, up to lookahead window)
+•	Merge new data with existing cache: additions and updates applied, removals flagged
+•	Re-run urgency bucketing on merged dataset
+•	Persist updated cache and lastSyncAt to electron-store
+•	Emit 'assignments-updated' IPC event to renderer process
+•	Check notification queue: fire any notifications due since last sync
+•	Set syncStatus = 'idle'; restore tray icon
+
+4.3 IPC Architecture
+Electron's contextBridge and ipcMain/ipcRenderer are used for all main-to-renderer communication. The renderer never has direct Node.js access (contextIsolation: true, nodeIntegration: false).
+
+IPC Channel	Direction & Purpose
+assignments:get	Renderer → Main: request current assignment list
+assignments:data	Main → Renderer: push updated assignment list after sync
+sync:trigger	Renderer → Main: manual refresh request
+sync:status	Main → Renderer: push sync status ('idle' | 'syncing' | 'error')
+settings:get	Renderer → Main: read settings
+settings:set	Renderer → Main: write settings
+token:save	Renderer → Main: store token in Keychain
+token:check	Renderer → Main: check if token exists (returns boolean, never the token itself)
+ 
+5. UI & Window Specification
+5.1 Menu Bar Icon
+State	Icon treatment
+Idle (assignments exist)	Calendar glyph with count badge (number of items due today/overdue)
+Idle (nothing due today)	Calendar glyph, no badge
+Syncing	Animated spinner (16x16 PNG sequence at 10fps via Tray.setImage)
+Error / offline	Icon with small warning dot (amber)
+Overdue items exist	Badge rendered in red background
+
+Icon assets: 16x16 and 32x32 PNG (for Retina). Template images (black/white) so macOS auto-inverts for dark menu bars. Stored in resources/icons/.
+
+5.2 Dropdown Panel
+•	Window type: BrowserWindow with frame: false, alwaysOnTop: false, show: false; positioned below tray icon using tray.getBounds()
+•	Size: 340px wide, height dynamic (min 240px, max 560px); uses auto-height via IPC after render
+•	Vibrancy: vibrancy: 'under-window', visualEffectState: 'active' on macOS for frosted glass background
+•	Dismissal: clicking outside the panel closes it (window blur event); pressing Escape closes it
+•	Sections rendered top to bottom: header bar (app name + sync status + settings gear), then urgency buckets, then footer (last synced timestamp + manual refresh)
+
+5.3 Assignment Row Component
+Each assignment renders as a single row (height 44px) containing:
+
+•	Course color dot (8px circle, left edge)
+•	Assignment title (truncated with ellipsis at 180px max-width)
+•	Due time string (e.g. 'Today 11:59 PM', 'Tomorrow', 'Apr 28')
+•	Submission badge: green checkmark if submitted, red dot if overdue, nothing otherwise
+•	Entire row is clickable — opens the Canvas assignment URL in the default browser
+
+5.4 Settings Window
+•	Separate BrowserWindow (not the dropdown); opened via gear icon; 480x520px fixed size
+•	Fields: Canvas base URL (text input), API token (password input with show/hide toggle), sync interval (select: 15/30/60 min), lookahead days (slider: 7/14/30/quarter), notification lead times (checkbox list: 24h, 2h, 30min, 15min)
+•	Course list: rendered below settings; each course shows name, color picker (native color input), and a visibility toggle
+•	On save: validates token with a test API call before persisting; shows success/error inline
+
+5.5 Onboarding Flow
+Shown once on first launch. Full-window BrowserWindow (560x440px):
+
+•	Step 1: Welcome screen with brief description and 'Get Started' CTA
+•	Step 2: Canvas URL input (pre-filled with https://canvas.uw.edu)
+•	Step 3: Token input with a direct link to the Canvas token generation page
+•	Step 4: Permission request for macOS notifications (calls Notification.requestPermission())
+•	Step 5: First sync runs inline; success screen shows count of assignments found
+•	Completion: sets onboardingComplete = true in store; opens main dropdown panel
+ 
+6. Notification System
+6.1 Notification Logic
+After each sync, the notification engine checks for assignments that cross a lead-time threshold between the previous sync and the current time. This prevents duplicate notifications across sync cycles.
+
+for each assignment with dueAt != null:
+  for each leadTime in settings.notificationLeadTimes:
+    fireAt = dueAt - leadTime (minutes)
+    if lastSyncAt < fireAt <= now:
+      fire notification for this assignment
+
+6.2 Notification Content
+Field	Content
+Title	Course name (e.g. 'CSE 123')
+Body	Assignment title + 'due in X hours' or 'due in X minutes'
+Action button	'Open in Canvas' — calls shell.openExternal(assignment.canvasUrl)
+Identifier	assignment.id + leadTime — prevents duplicate system notifications
+
+6.3 Focus Mode Behavior
+Electron does not currently expose a native API to read macOS Focus mode state. As a practical workaround, notifications use the default urgency level. Users can suppress them using macOS system-level Focus filters (the app appears in System Settings > Focus > App Exceptions). Document this limitation in the settings UI.
+ 
+7. App Startup & Lifecycle
+7.1 Login Item (Auto-Launch)
+The app registers itself as a macOS login item using Electron's built-in API:
+
+app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true })
+
+openAsHidden: true means the app starts without opening any window — only the menu bar icon appears. The user can toggle this in the Settings window.
+
+7.2 Main Process Boot Sequence
+•	app.whenReady(): create tray icon, register powerMonitor listeners, start sync engine
+•	Check onboardingComplete in store; if false, open onboarding window
+•	If onboardingComplete, fire initial sync immediately
+•	Register IPC handlers (assignments, sync, settings, token)
+•	Start node-cron job for scheduled syncs
+
+7.3 Quit Behavior
+The app should not quit when all windows are closed (window-all-closed event ignored). It lives in the menu bar permanently. Right-clicking the tray icon exposes a Quit option. On quit, the sync engine is cleanly shut down and caches flushed.
+ 
+8. Security Model
+8.1 Token Handling Rules
+•	Token is fetched from Keychain once per app session and held in memory in the main process only
+•	Token is NEVER sent over IPC to the renderer process
+•	Token is NEVER logged (console.log, file log, or Electron crash reporter)
+•	Token is NOT included in electron-store persistence
+•	If keytar.getPassword returns null, all API calls are blocked until re-auth
+
+8.2 Content Security Policy
+The BrowserWindow is configured with a strict CSP to prevent XSS and remote code execution:
+
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline';
+  connect-src 'self' https://canvas.uw.edu;
+  img-src 'self' data:;
+  frame-src 'none';
+
+8.3 Electron Security Checklist
+Setting	Value
+nodeIntegration	false
+contextIsolation	true
+sandbox	true
+webSecurity	true
+allowRunningInsecureContent	false
+experimentalFeatures	false
+preload script	Used for all contextBridge exposure; minimal surface area
+ 
+9. Build & Distribution
+9.1 Development Setup
+•	Node.js 20 LTS required
+•	Install dependencies: npm install
+•	Dev server: npm run dev (launches Electron with Vite HMR)
+•	Main process changes require manual restart; renderer hot-reloads
+
+9.2 Build & Package
+•	Production build: npm run build (Vite bundles renderer; tsc compiles main process)
+•	Package: npm run dist (electron-builder produces .app and .dmg in dist/)
+•	App bundle size target: < 250 MB
+
+9.3 Code Signing (Future)
+For distribution beyond personal use, the app must be signed and notarized with an Apple Developer ID ($99/year). For now, the app is distributed as an unsigned .app with instructions to right-click > Open to bypass Gatekeeper. This is acceptable for personal/single-user use.
+
+9.4 Project Structure
+canvas-dashboard/
+  src/
+    main/              # Electron main process (TS)
+      index.ts         # Entry point, app lifecycle
+      tray.ts          # Tray icon + menu
+      sync.ts          # Canvas API + iCal sync engine
+      notifications.ts # Notification scheduling
+      ipc.ts           # IPC handler registration
+    renderer/          # React app (TSX)
+      App.tsx          # Root component
+      Panel.tsx        # Dropdown panel
+      Settings.tsx     # Settings window
+      Onboarding.tsx   # First-run flow
+      components/      # AssignmentRow, BucketSection, etc.
+    shared/            # Types shared between main + renderer
+      types.ts         # Assignment, Course, SyncStatus interfaces
+  resources/
+    icons/             # Tray icon PNGs (16, 32, template variants)
+  electron.vite.config.ts
+  electron-builder.yml
+  package.json
+ 
+10. Testing Plan
+10.1 Unit Tests (Vitest)
+•	Urgency bucketing logic: test each bucket boundary condition with fixed timestamps
+•	iCal parser: test against sample .ics files including edge cases (all-day events, missing DTSTART, multi-day events)
+•	Rate limit backoff: mock axios, verify retry intervals
+•	Notification deduplication: verify same assignment + leadTime doesn't fire twice
+•	Assignment merge logic: additions, updates, and removals from API response
+
+10.2 Integration Tests
+•	Canvas API mock server (nock): simulate 200, 401, 429, 503 responses
+•	Keytar mock: verify token is retrieved but never exposed over IPC
+•	electron-store: verify correct keys are read/written across settings changes
+
+10.3 Manual QA Checklist
+Test case	Expected result
+First launch with no token	Onboarding opens; app does not crash or sync
+Invalid token entered	API returns 401; settings shows error; no assignments loaded
+Network goes offline mid-sync	Sync fails gracefully; stale cache shown with 'Offline' footer
+Machine wakes from sleep	Sync fires within 10 seconds; panel reflects fresh data
+Assignment becomes overdue	Moves to Overdue bucket on next sync; shown in red
+All assignments submitted	Nothing in Overdue/Today buckets; 'All clear' state shown
+Notification lead time fires	macOS notification appears with correct assignment title and course
+Token deleted from Keychain manually	App detects missing token on next sync; prompts re-auth
+ 
+11. Phased Implementation Plan
+Phase 1 — MVP (Weeks 1-3)
+•	Electron + Vite + React scaffold with menu bar icon
+•	iCal feed fetch and parse (no auth required)
+•	Basic urgency bucketing and panel render (Today / This Week / Later)
+•	electron-store for settings (Canvas iCal URL, lookahead window)
+•	Auto-launch via app.setLoginItemSettings
+•	Manual refresh button
+•	Unsigned .app bundle via electron-builder
+
+Phase 2 — Full Integration (Weeks 4-5)
+•	REST API integration with PAT stored in Keychain via keytar
+•	Submission status badges on assignment rows
+•	macOS notifications with configurable lead times
+•	powerMonitor wake event triggering auto-sync
+•	Course color coding and per-course hide toggle
+•	Onboarding flow with step-by-step token setup
+
+Phase 3 — Polish (Optional, Weeks 6-7)
+•	Vibrancy / frosted glass panel background
+•	Personal task layer (local-only manual tasks)
+•	Menu bar icon badge count for overdue/today items
+•	Settings import/export for easy reinstall
+•	Optional: open-source release and README for other UW students
+ 
+12. Open Questions & Decisions
+Question	Notes
+iCal vs REST API for MVP?	Recommend iCal for speed; REST in Phase 2. Confirm iCal feed lag is acceptable (15-30 min).
+Should the panel use vibrancy?	Vibrancy is visually nice but adds complexity and can cause flicker. Defer to Phase 3.
+Sync interval default?	30 minutes is proposed. Canvas iCal lags up to 30 min anyway, so syncing more often wastes calls.
+Multiple Canvas instances?	Out of scope for v1. One Canvas URL per installation. Could add in v2 for students at multiple schools.
+Apple Silicon vs Intel build?	electron-builder supports universal binary. Build as universal from the start.
+Crash reporting?	Skip for personal use. If open-sourced, add Sentry with no PII in payloads.
+Auto-update?	Out of scope for v1. Manual re-download if needed.
+
+Canvas Assignment Dashboard  |  TRD v1.0  |  April 2026  |  Aarav Chhabra

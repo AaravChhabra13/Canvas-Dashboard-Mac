@@ -1,0 +1,248 @@
+PRODUCT REQUIREMENTS DOCUMENT
+Canvas Assignment
+Dashboard
+Mac Menu Bar App
+Version 1.0 — Draft
+Date April 2026
+Author Aarav Chhabra
+Status In Review
+Platform macOS 13+
+A persistent Mac utility that surfaces Canvas LMS assignments and deadlines passively in the menu bar
+— so you always know what's due the moment you open your laptop, without navigating to Canvas.
+Canvas Assignment Dashboard Product Requirements Document
+1. Problem & Motivation
+Canvas's own interface is buried inside a browser tab — you have to actively seek it out to know what's due. This
+creates a friction gap: assignments get missed not because you forgot about them, but because you never got a
+timely, ambient reminder.
+The goal is to make deadline awareness zero-effort. When you open your laptop, your assignment load should
+already be visible — no clicking, no browser tab, no login.
+Today (the problem) The solution
+Canvas requires active navigation to see
+what's due.
+A persistent menu bar app that appears on wake.
+Email notifications are easy to miss or ignore. Native macOS notifications with configurable lead times.
+You carry the cognitive load of remembering
+deadlines.
+Ambient urgency dashboard — always there, never intrusive.
+Submission status requires logging into
+Canvas.
+Submission badges pulled live from the Canvas API.
+2. Target User
+Primarily: UW students (or any Canvas LMS user) on macOS who manage multiple courses with staggered
+deadlines and want ambient awareness without added friction.
+User Profile
+Attribute Detail
+Platform Mac user, macOS 13 Ventura or later
+Course load 3–6 active courses per quarter
+Usage pattern Heavy multitasker; switches between apps frequently
+Pain point Misses or nearly misses assignments occasionally
+Preference Prefers quick glance over deep UI navigation
+Canvas usage Logs into Canvas daily but finds it cumbersome
+Jobs To Be Done
+Confidential | v1.0 | April 2026
+Page 2
+Canvas Assignment Dashboard Product Requirements Document
+• "When I open my laptop, I want to immediately know what's due today and this week."
+• "I want urgency signaled visually — not buried in a list."
+• "I don't want to manage a second system — it should stay in sync automatically."
+• "I want to click an assignment and land directly on its Canvas page."
+Confidential | v1.0 | April 2026
+Page 3
+Canvas Assignment Dashboard Product Requirements Document
+3. Core Features
+Features are prioritized P0 (must-have for launch), P1 (important), and P2 (nice-to-have). P0 features block the
+MVP; P1 and P2 ship in subsequent phases.
+F1 Persistent always-on dashboard P0
+A floating menu bar app that appears on wake, showing upcoming assignments. Pinned to the macOS menu bar — never
+needs to be manually launched after initial setup. Survives reboots via a Login Item registration.
+F2 Canvas live sync P0
+Pulls assignments, quizzes, and discussions from Canvas via the REST API or iCal feed. Auto-refreshes on a configurable
+interval (default 30 min), on wake, and on demand. Displays course name, assignment title, due date/time, and submission
+status.
+F3 Urgency timeline view P0
+Assignments displayed in time-bucketed rows: Overdue, Due Today, Due Tomorrow, This Week, Coming Up. Color coding
+by urgency (red / amber / green) and by course. Overdue items float to the top with a distinct visual treatment.
+F4 One-click Canvas link P1
+Clicking any assignment opens its Canvas page directly in the default browser. No copy-pasting, no searching Canvas
+manually.
+F5 macOS notifications P1
+System notification at configurable intervals before a deadline (e.g. 24 h, 2 h, 30 min). Respects macOS Focus modes.
+Notification action button opens Canvas directly.
+F6 Personal task layer P2
+Optional manual tasks added alongside Canvas items — e.g. 'Start essay outline'. Displayed with a visual distinction from
+synced items. Stored locally only; not synced anywhere.
+F7 Course filter & settings P2
+Toggle visibility per course. Set per-course colors. Configure lookahead window (1 week / 2 weeks / full quarter). Option to
+hide completed or graded assignments.
+Confidential | v1.0 | April 2026
+Page 4
+Canvas Assignment Dashboard Product Requirements Document
+4. Canvas API Integration
+UW Canvas exposes a documented REST API and iCal calendar feed. Two integration approaches are
+available, suitable for different development phases.
+Approach Details
+Option A — REST API (recommended
+for v1.1+)
+Uses a Personal Access Token generated in Canvas Settings. Richer data:
+submission status, point values, file attachments. Token stored securely in
+macOS Keychain.
+Option B — iCal feed (recommended for
+MVP)
+Canvas exposes a calendar .ics feed. No token needed, just a URL. Limited to
+due date + title. Fast to integrate — ideal for getting the MVP working quickly.
+Key REST API Endpoints
+Endpoint Used for
+GET /api/v1/courses Fetch active courses and their metadata
+GET /api/v1/planner/items Unified assignment, quiz, discussion feed
+GET
+/api/v1/courses/:id/assignments
+Per-course assignment detail (fallback)
+GET /api/v1/users/self/upcomin
+g_events
+Upcoming calendar events
+Authentication
+Personal Access Token (PAT) generated once by the user inside Canvas (Account > Settings > Approved
+Integrations > New Access Token). Stored in macOS Keychain via the keytar library. Never written to disk in
+plaintext. All API requests include an Authorization: Bearer <token> header.
+Rate Limiting & Error Handling
+Scenario Handling
+HTTP 401 / 403 Clear stored token; show re-auth prompt in settings panel
+HTTP 429 (rate limited) Exponential backoff: 60 s, 120 s, 240 s; show warning badge
+Network offline Skip sync cycle; show 'Offline — cached data' footer with last-sync time
+iCal parse error Log malformed event, skip it, continue parsing the rest of the feed
+Confidential | v1.0 | April 2026
+Page 5
+Canvas Assignment Dashboard Product Requirements Document
+5. UX & Interface Design
+The app should feel like a native Mac utility — not a web app in a window. It should invoke macOS conventions:
+system fonts, native notifications, and a menu bar presence. No onboarding required after initial setup.
+Persistent Mode Options
+Mode Description
+Menu bar app (recommended) Icon in the top bar; click to expand dropdown panel. Least intrusive — no windows to
+manage.
+Floating window Pinned to a Mission Control Space; always visible in a dedicated desktop.
+Notification Center widget Native macOS widget; no separate window needed.
+Main Dashboard Layout
+The dropdown panel renders in this order, top to bottom:
+• Header bar: app name, sync status indicator, and settings gear icon
+• Urgency sections: Overdue (red), Due Today, Due Tomorrow, This Week, Coming Up
+• Each assignment row: course color dot → assignment name → due time → submission badge
+• Footer: last synced timestamp and manual refresh button
+Key UX Behaviors
+Behavior Specification
+Wake behavior On wake from sleep, auto-sync fires. Menu bar badge updates immediately.
+Dismissal Clicking outside the panel or pressing Escape closes it.
+Empty state When nothing is due in 48 h: 'All clear' message + next upcoming item shown softly.
+Overdue treatment Floated above 'Due Today' section; rendered with red background badge.
+Assignment click Opens the Canvas assignment URL in the user's default browser.
+First launch Onboarding flow: Canvas URL → token → notification permission → first sync. Under 60
+seconds total.
+Confidential | v1.0 | April 2026
+Page 6
+Canvas Assignment Dashboard Product Requirements Document
+6. Build Options
+Three realistic implementation paths, ordered by recommended suitability:
+Option Pros Cons
+A — Electron + React
+(recommended)
+Build with web tech. Fast iteration if you
+know JavaScript/TypeScript. Rich
+ecosystem.
+~150 MB binary (Chromium bundled).
+Slightly heavier feel than pure native.
+B — Swift / SwiftUI (native Mac
+app)
+Best performance and native feel. Direct
+macOS API access. Tiny binary (~5 MB).
+Steeper learning curve. Slower to build if
+not experienced with Swift.
+C — Raycast extension
+(no-code MVP)
+Quickest to get running. Zero setup
+friction. No coding required.
+Not truly always-on. Limited
+customization. Requires Raycast to be
+installed.
+Recommended Start with Option A (Electron + React) for the MVP. Use the Canvas iCal feed first to
+avoid auth complexity. Add the REST API in v1.1 once the UI is solid. Rewrite
+performance-critical parts in Swift later if needed.
+Confidential | v1.0 | April 2026
+Page 7
+Canvas Assignment Dashboard Product Requirements Document
+7. Phased Roadmap
+Phase 1 — MVP (Weeks 1–3)
+• Electron + Vite + React scaffold with working menu bar icon
+• iCal feed fetch and parse (no auth required)
+• Urgency bucketing and panel render (Today / This Week / Later)
+• electron-store for settings (Canvas iCal URL, lookahead window)
+• Auto-launch via macOS login item registration
+• Manual refresh button in panel footer
+• Unsigned .app bundle via electron-builder
+Phase 2 — Full Integration (Weeks 4–5)
+• Canvas REST API with Personal Access Token stored in macOS Keychain
+• Submission status badges on each assignment row
+• macOS notifications with configurable lead times (24 h, 2 h, 30 min, 15 min)
+• powerMonitor wake event triggering automatic background sync
+• Per-course color coding and hide/show toggle
+• Onboarding flow with step-by-step token setup guide
+Phase 3 — Polish (Optional, Weeks 6–7)
+• Vibrancy / frosted glass panel background (macOS visual effect)
+• Personal manual task layer alongside Canvas items
+• Menu bar icon badge count for overdue and today items
+• Settings import/export for easy reinstall
+• Optional: open-source release for other UW Canvas users
+Confidential | v1.0 | April 2026
+Page 8
+Canvas Assignment Dashboard Product Requirements Document
+8. Risks & Constraints
+Risk Severity Mitigation
+API token security — token gives read access to all
+Canvas data.
+High Store exclusively in macOS Keychain via keytar.
+Never log or write to disk.
+iCal sync lag — Canvas iCal feed can lag 15–30 min
+after an instructor edits an assignment.
+Medium Document the limitation. Upgrade to REST API in
+Phase 2 for near-real-time data.
+Canvas API rate limiting — excessive polling could
+trigger HTTP 429 responses.
+Medium Default sync interval of 30 min. Implement
+exponential backoff on 429. Cache aggressively.
+macOS Gatekeeper — unsigned .app bundles trigger
+a security warning on first open.
+Low For personal use: right-click > Open bypasses
+Gatekeeper. Document this in the README.
+Electron binary size — ~150 MB installed due to
+bundled Chromium.
+Low Acceptable for personal use. Note for any future
+public distribution.
+Confidential | v1.0 | April 2026
+Page 9
+Canvas Assignment Dashboard Product Requirements Document
+9. Success Metrics
+For a personal utility, success is primarily qualitative — but these targets give concrete signals that the app is
+working as intended.
+Metric Target
+Assignments missed per
+quarter
+0
+Time to see full deadline list on
+wake
+< 5 seconds
+Maximum sync lag from
+Canvas
+30 minutes (iCal) / 5 minutes (REST)
+Memory footprint at steady
+state
+< 120 MB RAM
+CPU usage between sync
+cycles
+< 1%
+Onboarding completion time < 60 seconds from first launch
+Qualitative Bar
+The real signal You stop reflexively opening Canvas 'just to check.' The app becomes ambient
+infrastructure — like a clock on your wall. You notice when it's missing, not when it's
+working.
+Canvas Assignment Dashboard | PRD v1.0 | April 2026 | Aarav Chhabra
+Confidential | v1.0 | April 2026
+Page 10
