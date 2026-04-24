@@ -30,8 +30,18 @@ export interface SyncState {
   error?: string
 }
 
+export interface Course {
+  id: string
+  name: string
+  color: string
+  hidden: boolean
+}
+
 export interface Settings {
+  canvasBaseUrl: string
   canvasIcalUrl: string
   syncIntervalMinutes: number
   lookaheadDays: number
+  notificationLeadTimes: number[]  // minutes before due date (e.g. 1440=24h, 120=2h, 30=30min)
+  onboardingComplete: boolean
 }

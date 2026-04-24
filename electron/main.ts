@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Tray, nativeImage, screen, powerMonitor } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { setupIPC } from './ipc'
+import { setupIPC, isOnboarded } from './ipc'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -17,6 +17,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 
 let tray: Tray | null = null
 let panel: BrowserWindow | null = null
+let onboardingWin: BrowserWindow | null = null
 // Timestamp of last blur-close; avoids re-opening on the same tray click that closes
 let lastBlurTime = 0
 
@@ -49,7 +50,6 @@ function createPanel(): void {
 
   if (VITE_DEV_SERVER_URL) {
     panel.loadURL(VITE_DEV_SERVER_URL)
-    // Show panel immediately in dev mode for easy iteration
     panel.once('ready-to-show', () => {
       panel?.show()
       panel?.webContents.openDevTools({ mode: 'detach' })
@@ -63,10 +63,43 @@ function createPanel(): void {
     panel?.hide()
   })
 
-  // ESC closes panel
   panel.webContents.on('before-input-event', (_ev, input) => {
     if (input.type === 'keyDown' && input.key === 'Escape') panel?.hide()
   })
+}
+
+function createOnboardingWindow(): void {
+  onboardingWin = new BrowserWindow({
+    width: 560,
+    height: 480,
+    show: false,
+    frame: false,
+    resizable: false,
+    skipTaskbar: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.mjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    onboardingWin.loadURL(VITE_DEV_SERVER_URL + '#onboarding')
+    onboardingWin.once('ready-to-show', () => {
+      onboardingWin?.show()
+      onboardingWin?.center()
+    })
+  } else {
+    onboardingWin.loadFile(path.join(RENDERER_DIST, 'index.html'), { hash: 'onboarding' })
+    onboardingWin.once('ready-to-show', () => {
+      onboardingWin?.show()
+      onboardingWin?.center()
+    })
+  }
+
+  onboardingWin.on('closed', () => { onboardingWin = null })
 }
 
 function showPanel(): void {
@@ -80,15 +113,12 @@ function showPanel(): void {
   let x = Math.round(trayBounds.x + trayBounds.width / 2 - pw / 2)
   const y = trayBounds.y + trayBounds.height + 4
 
-  // Clamp to display
   if (x + pw > db.x + db.width) x = db.x + db.width - pw
   if (x < db.x) x = db.x
 
   panel.setPosition(x, y, false)
   panel.show()
   panel.focus()
-
-  // Let renderer know it just became visible so it can re-fetch
   panel.webContents.send('panel:shown')
 }
 
@@ -109,11 +139,18 @@ app.whenReady().then(() => {
 
   createPanel()
 
-  if (panel) setupIPC(panel)
+  const { triggerSync, isOnboardingComplete } = setupIPC(panel!, {
+    showPanel: () => showPanel(),
+    closeOnboarding: () => { onboardingWin?.close(); onboardingWin = null },
+  })
 
-  // Re-sync on wake from sleep
+  if (!isOnboardingComplete) {
+    createOnboardingWindow()
+  }
+
+  // On wake from sleep: sync only if the user has finished onboarding
   powerMonitor.on('resume', () => {
-    panel?.webContents.send('sync:trigger-from-main')
+    if (isOnboarded()) triggerSync()
     panel?.webContents.send('panel:shown')
   })
 
