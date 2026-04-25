@@ -72,8 +72,8 @@ Structure:
   1. iCal Feed (Recommended for most) — works everywhere, no login needed
   2. API Token (Best experience) — works at schools that allow it, not UW
   3. Session Cookie (UW students) — works at UW, requires a few extra steps
-- Each card has a short one-line description of what it is in plain english
-- Each card has a "How to set this up" button that opens a separate guide page
+- Each card has a short one-line description in plain english
+- Each card has a "How to set this up" button opening a separate guide page
 - Guide pages explain step by step how to get the required credential:
 
   iCal guide steps:
@@ -89,7 +89,7 @@ Structure:
   4. Click New Access Token
   5. Give it a name like Canvas Companion
   6. Copy the token and paste it here
-  Note: UW students — your school blocks this option, use Session Cookie instead
+  Note: UW students — your school blocks this option, use Session Cookie
 
   Session Cookie guide steps:
   1. Log into Canvas in Chrome
@@ -100,20 +100,157 @@ Structure:
   6. Click Headers → scroll to Request Headers
   7. Find the Cookie header and copy its entire value
   8. Paste it here
-  Note: This expires when you log out of Canvas — you will need to re-paste it
+  Note: This expires when you log out of Canvas — re-paste when it stops working
 
 - After completing setup, first sync runs and shows assignment count
 - Guide pages use framer-motion slide animations matching the rest of the UI
 - All text written in plain friendly language, no technical jargon
 
-## Phase 5 — Shipping (PLANNED)
-Goals:
-- Polish and bug fixes pass
+## Phase 5 — Smart deadline intelligence (PLANNED)
+
+### Calendar tab
+- Add a third tab called Calendar alongside Assignments and Courses
+- Shows the full current month as a proper calendar grid
+- Each day cell is shaded by assignment load — more assignments and higher
+  point values = darker/more saturated color (like a heatmap)
+  Implementation: Map<date string, {count: number, points: number}>
+  Color scale: empty=transparent, light=1-2 assignments, medium=3-4, dark=5+
+- Each day with assignments shows short badges (truncated course code + title)
+  inside the day cell — e.g. "MATH 126 - HW 4"
+- Clicking a day expands to show all assignments due that day
+- Calendar resyncs on every refresh cycle with the rest of the data
+- Helps students see crunch weeks at a glance for the whole quarter
+
+### Estimated time-to-complete
+- Each assignment row gets a time tag button (tap to set: 15min, 1hr, 3hr, 5hr+)
+- Stored in electron-store keyed by assignment ID — survives syncs
+- Header shows "Today's load: ~4.5 hrs" summing estimates for today's assignments
+- Implementation: Record<assignmentId, estimateMinutes> in electron-store
+
+### Daily digest notification
+- Optional 8 AM notification summarizing the day
+- Format: "3 due today · 2 due tomorrow · 1 overdue"
+- Single notification replacing N individual lead-time notifications
+- Toggle in settings — off by default, user opts in
+- Implemented via node-cron scheduled at 08:00 daily
+
+## Phase 5.1 — Cross-device and sync (PLANNED)
+
+### iCloud sync for personal tasks
+- Personal tasks currently stored locally in electron-store
+- Move storage path to ~/Library/Mobile Documents/com~apple~CloudDocs/
+  CanvasCompanion/tasks.json
+- Syncs automatically across all the user's Macs via iCloud for free
+- No backend, no server, no account needed
+- One config change in the electron-store initialization path
+
+### Web companion view
+- On each sync, write a static read-only HTML file of the current dashboard
+  to ~/Desktop/canvas-companion.html or a user-chosen path
+- User can open this file on their phone browser to see assignments
+- No server needed — pure static HTML with inline CSS
+- Auto-regenerated on every sync so it stays current
+- Stretch feature — low effort, high value for mobile glancing
+
+## Phase 5.2 — UI/UX refinements (PLANNED)
+
+### Command palette
+- Cmd+K inside the panel opens a fuzzy search across all assignments
+- Search by assignment title, course name, or due date
+- Use fuse.js for fuzzy matching (npm install fuse.js)
+- Results show assignment title, course, and due date
+- Enter opens the Canvas URL, Escape closes the palette
+- Implementation: overlay component with input + filtered assignment list
+
+### Keyboard navigation
+- Arrow keys move focus through assignment rows
+- Enter opens Canvas URL for focused assignment
+- Space marks focused assignment as done
+- Cmd+D dismisses all overdue assignments at once
+- Escape closes the panel
+- Low effort, high value for power users
+
+### Compact/expanded view toggle
+- Toggle button in header switches between two view modes
+- Compact: title and due date only, smaller row height (32px)
+- Expanded: full metadata — course name, time estimate, submission badge
+- Preference persisted in electron-store as viewMode: 'compact' | 'expanded'
+
+### Snooze
+- Right-click on any assignment row opens a context menu
+- Options: Snooze 1 hour, Snooze until tomorrow, Snooze until next sync
+- Snoozed assignments hidden from main view with a small snooze badge
+  on the tray icon showing count of snoozed items
+- Snooze state stored in electron-store as
+  Record<assignmentId, snoozeUntil: ISO timestamp>
+- Automatically un-snoozed after the snooze period expires
+
+## Phase 5.3 — Reliability, shipping polish and deployment (PLANNED)
+This phase also includes everything from the original Phase 5 shipping plan.
+
+### Deployment and distribution
 - Rename app display name to Canvas Companion everywhere in UI
-- Code sign and notarize with Apple Developer ID for distribution
-- Build universal binary (Apple Silicon + Intel) via electron-builder
+- Code sign and notarize with Apple Developer ID ($99/year)
+- Build universal binary supporting Apple Silicon and Intel via electron-builder
 - Write README explaining all three setup options for other students
 - Optional open-source release on GitHub
+
+### Auto-update
+- Implement electron-updater for automatic app updates
+- ~30 lines of code using electron-builder's built-in updater
+- Requires code signing to work properly
+- Eliminates manual re-download problem noted in TRD
+
+### Crash recovery
+- Wrap all electron-store reads in try/catch
+- If assignment cache is corrupted fall back to empty state instead of crashing
+- Like Java: try { store.get() } catch (e) { return defaultValue }
+- Show a subtle "cache reset" notice in the panel footer if recovery occurred
+
+### Diagnostic health panel
+- Hidden page in settings (tap version number 5 times to unlock)
+- Shows: last sync timestamp, sync history (last 10 syncs), API response codes,
+  iCal parse errors, GraphQL errors, electron-store file size
+- Hugely useful for debugging user-reported issues after shipping
+
+### Sentry error reporting with PII scrubbing
+- Add Sentry SDK for crash and error reporting
+- Scrub all PII before sending — no assignment titles, no course names,
+  no URLs, no tokens in payloads
+- Only send: error type, stack trace, app version, macOS version
+- Toggle in settings — on by default, user can opt out
+
+## Phase 6 — Stretch and future (PLANNED)
+
+### Multi-Canvas instance support
+- TRD marks this as v2 but design the data model now to avoid painful migration
+- Add instanceId field to every Course and Assignment object in types.ts
+- electron-store structure: instances[] array each with their own
+  url, authMethod, token/cookie, courses, assignments
+- UI: instance switcher in the header or settings
+- Sync engine runs independently per instance
+
+### Grade tracking (requires Phase 4 GraphQL or REST API)
+- Canvas API returns scores and possible points per assignment
+- Show running grade percentage per course in the Courses tab
+- "What you need on the final to keep an A" calculation per course
+- Displayed as a subtle progress bar under each course name
+- Only available when GraphQL or REST API is active — not available with iCal
+
+### Quick capture global hotkey
+- Cmd+Shift+Space opens a tiny floating input anywhere on the Mac
+- Type a personal task title and optionally a due date
+- Press Enter to save — task appears in the panel immediately
+- Uses Electron globalShortcut API — registers on app launch
+- Stored in electron-store personal tasks same as the + button in panel
+
+## Version 1.1 / 1.2 — Post-shipping updates
+Features to build after the initial public release:
+
+- Grade tracking (if GraphQL/REST is stable from Phase 6)
+- Quick capture global hotkey
+- Additional time estimate options and productivity insights
+- User-requested features based on feedback after open-source release
 
 ## I know Java but not JavaScript/TypeScript
 Explain things in Java terms when helpful.
