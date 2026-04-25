@@ -15,47 +15,57 @@ Read it before making any decisions about architecture or implementation.
 ## Stack
 - Electron 30 + Node.js 20
 - React 18 + TypeScript
-- Tailwind CSS + Vite
+- Tailwind CSS v4 + Vite
 - electron-store, keytar, axios, ical.js, node-cron
-- framer-motion, date-fns, lucide-react (added in Phase 3.1)
+- framer-motion, date-fns, lucide-react
 
 ## Critical - do not touch these files ever
 - vite.config.ts
 - package.json (especially do not add or remove the "type" field)
 - tsconfig.json
 
-## Current status
-- Phase 1 COMPLETE — iCal feed fetch, urgency bucketing, basic panel UI
-- Phase 2 COMPLETE — onboarding flow, course colors, wake sync, notifications
-- Phase 3 COMPLETE — dark/light mode, mark as done, menu bar badge count,
-  frosted glass panel, personal tasks, course filter tabs, hide old overdue
-- Phase 3.1 COMPLETE — liquid glass design, animated rows, course drill-down, relative time footer
+## Critical - do not edit these files ever
+- canvas-companion-main/ (reference only, never edit)
+- dist-electron/ (compiled output, never read or edit for debugging)
 
 ## Important notes
 - UW Canvas does NOT allow personal access tokens — REST API is blocked
-- App uses iCal feed as primary data source permanently
-- electron-store requires a name field when initialized —
-  always pass name: "app-store" or name: "token" to new Store()
-- Do not read or search dist-electron/ for bugs — always fix source files
-  in the electron/ folder only
+- App uses iCal feed as primary data source
+- iCal feed does not provide Canvas assignment URLs — clicking assignments
+  does not open Canvas yet, this is fixed in Phase 4
+- electron-store always needs a name field: new Store({ name: 'app-store' })
+- Always fix bugs in source files in electron/ and src/ only
+- Tailwind v4 syntax: use @import "tailwindcss" not @tailwind directives
+- postcss.config.js must use @tailwindcss/postcss as the plugin
 
-## Phase 3.1 — UI/UX upgrade (COMPLETE)
-Reference app: canvas-companion-main/ at project root.
+## Completed phases
+- Phase 1 COMPLETE — iCal feed fetch, urgency bucketing, basic panel UI
+- Phase 2 COMPLETE — onboarding flow, course colors, wake sync, notifications
+- Phase 3 COMPLETE — dark/light mode, mark as done, menu bar badge,
+  frosted glass, personal tasks, course filter tabs, hide old overdue
+- Phase 3.1 COMPLETE — full liquid glass UI/UX upgrade, aurora background,
+  animated assignment rows, course color coding, overdue/today color labels,
+  clear overdue button, settings as animated page, course drill-down
 
-What was built:
-1. Liquid glass design — CSS variables + .glass, .glass-inset, .aurora, .text-gradient
-   classes in src/index.css; aurora background + glass panel applied to Panel.tsx
-2. Animated assignment rows — framer-motion motion.div with opacity+y stagger animation;
-   always-visible checkbox; hover ExternalLink icon (lucide-react)
-3. Course tab with drill-down — Assignments/Courses top tabs; Courses tab shows
-   cards with total/overdue/upcoming + chevron; clicking drills into that course
-4. Footer — date-fns formatDistanceToNowStrict for relative time; Clear N overdue button
+## Phase 4 — Authentication and moving off VS Code (PLANNED)
+Goals:
+- Implement Canvas GraphQL API using browser session cookie
+  (UW blocks PAT tokens so session cookie is the only option)
+- GraphQL endpoint: https://canvas.uw.edu/api/graphql
+- This gives us real Canvas assignment URLs so clicking rows opens Canvas
+- Add session cookie input field in settings panel
+- Fall back to iCal if GraphQL request fails
+- Get the app running as a standalone .app outside of VS Code
+  (unsigned build via electron-builder for personal use)
+- Right-click tray icon to quit instead of closing terminal
 
-## Phase 2.1 — Canvas GraphQL (PLANNED)
-- Use https://canvas.uw.edu/api/graphql with browser session cookie
-- Fetch submission status, points possible, assignment type
-- Fall back to iCal if GraphQL fails
-- Add session cookie input in settings panel
+## Phase 5 — Shipping (PLANNED)
+Goals:
+- Polish and bug fixes pass
+- Code sign and notarize with Apple Developer ID for distribution
+- Build universal binary (Apple Silicon + Intel) via electron-builder
+- Write README for other UW students
+- Optional open-source release on GitHub
 
 ## I know Java but not JavaScript/TypeScript
 Explain things in Java terms when helpful.
