@@ -82,8 +82,22 @@ export function AssignmentItem({ assignment, index, completed, onToggleComplete 
 
         {/* Text content */}
         <div className="min-w-0 flex-1 flex flex-col gap-1.5">
-          <div className="text-[11px] uppercase tracking-wider text-muted-foreground truncate">
-            {assignment.courseName}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground truncate">
+              {assignment.courseName}
+            </span>
+            {assignment.source === 'cse-site' && (
+              <span
+                className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wide"
+                style={{
+                  background: `${getCourseColor(assignment.courseName)}22`,
+                  color: getCourseColor(assignment.courseName),
+                  border: `1px solid ${getCourseColor(assignment.courseName)}44`,
+                }}
+              >
+                CSE
+              </span>
+            )}
           </div>
           <div
             className={`text-sm font-medium leading-snug truncate ${

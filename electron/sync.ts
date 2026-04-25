@@ -1,8 +1,9 @@
 import { createRequire } from 'node:module'
 import axios from 'axios'
-import type { Assignment, Course } from '../src/shared/types'
+import type { Assignment, Course, CseSiteEntry } from '../src/shared/types'
 import { getToken, fetchCoursesFromApi, fetchPlannerItems } from './canvasApi'
 import { fetchAssignmentsViaGraphQL } from './graphqlApi'
+import { scrapeCseSite, mergeCseAssignments } from './cseScraper'
 
 // ical.js is CJS; use createRequire so Rollup passes it through at runtime
 const _require = createRequire(import.meta.url)
@@ -29,31 +30,43 @@ export async function syncAll(
   sessionCookie: string,
   lookaheadDays: number,
   storedCourses: Course[],
+  cseSiteUrls: CseSiteEntry[] = [],
 ): Promise<SyncResult> {
   const token = getToken()
 
+  let canvasAssignments: Assignment[] = []
+  let finalCourses: Course[] = []
+
   if (token) {
     const freshCourses = await fetchCoursesFromApi(baseUrl, token)
-    const mergedCourses = mergeCourses(freshCourses, storedCourses)
-    const assignments = await fetchPlannerItems(baseUrl, token, lookaheadDays, mergedCourses)
-    return { assignments, courses: mergedCourses }
-  }
-
-  if (sessionCookie) {
+    finalCourses = mergeCourses(freshCourses, storedCourses)
+    canvasAssignments = await fetchPlannerItems(baseUrl, token, lookaheadDays, finalCourses)
+  } else if (sessionCookie) {
     try {
       const result = await fetchAssignmentsViaGraphQL(baseUrl, sessionCookie, lookaheadDays, storedCourses)
-      return { assignments: result.assignments, courses: mergeCourses(result.courses, storedCourses) }
+      canvasAssignments = result.assignments
+      finalCourses = mergeCourses(result.courses, storedCourses)
     } catch (e) {
       console.error('GraphQL sync failed, falling back to iCal:', e instanceof Error ? e.message : e)
+      if (icalUrl) canvasAssignments = await fetchAssignmentsFromIcal(icalUrl)
     }
+  } else if (icalUrl) {
+    canvasAssignments = await fetchAssignmentsFromIcal(icalUrl)
   }
 
-  if (icalUrl) {
-    const assignments = await fetchAssignmentsFromIcal(icalUrl)
-    return { assignments, courses: [] }
+  if (canvasAssignments.length === 0 && finalCourses.length === 0 && cseSiteUrls.length === 0) {
+    return { assignments: [], courses: [] }
   }
 
-  return { assignments: [], courses: [] }
+  // Augment with CSE course site data
+  if (cseSiteUrls.length > 0) {
+    const allCseAssignments = (
+      await Promise.all(cseSiteUrls.map(entry => scrapeCseSite(entry, finalCourses)))
+    ).flat()
+    canvasAssignments = mergeCseAssignments(canvasAssignments, allCseAssignments)
+  }
+
+  return { assignments: canvasAssignments, courses: finalCourses }
 }
 
 // ── iCal path (Phase 1, kept as fallback) ───────────────────────────────────

@@ -3,13 +3,14 @@ import Store from 'electron-store'
 import { syncAll } from './sync'
 import { saveToken, deleteToken, hasToken, validateToken, getToken } from './canvasApi'
 import { checkAndFireNotifications, requestNotificationPermission } from './notifications'
-import type { Assignment, Course, PersonalTask, Settings, SyncState } from '../src/shared/types'
+import type { Assignment, Course, CseSiteEntry, PersonalTask, Settings, SyncState } from '../src/shared/types'
 
 interface StoreSchema {
   settings: Settings
   courses: Course[]
   completedIds: string[]
   personalTasks: PersonalTask[]
+  cseSiteUrls: CseSiteEntry[]
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -55,12 +56,14 @@ async function runSync(win: BrowserWindow, callbacks: SetupIPCCallbacks): Promis
 
   try {
     const storedCourses = store.get('courses') as Course[]
+    const cseSiteUrls = store.get('cseSiteUrls') as CseSiteEntry[]
     const result = await syncAll(
       settings.canvasBaseUrl,
       settings.canvasIcalUrl,
       settings.canvasSessionCookie,
       settings.lookaheadDays,
       storedCourses,
+      cseSiteUrls,
     )
 
     assignments = result.assignments
@@ -114,6 +117,7 @@ export function setupIPC(
       courses: [],
       completedIds: [],
       personalTasks: [],
+      cseSiteUrls: [],
     },
   })
 
@@ -191,6 +195,14 @@ export function setupIPC(
   ipcMain.handle('tasks:save', (_event, tasks: PersonalTask[]) => {
     store.set('personalTasks', tasks)
     return tasks
+  })
+
+  // ── CSE site URLs ─────────────────────────────────────────────────────────
+  ipcMain.handle('cse-sites:get', () => store.get('cseSiteUrls') as CseSiteEntry[])
+  ipcMain.handle('cse-sites:save', async (_event, entries: CseSiteEntry[]) => {
+    store.set('cseSiteUrls', entries)
+    await runSync(win, callbacks)
+    return entries
   })
 
   // ── Notifications ─────────────────────────────────────────────────────────

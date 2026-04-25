@@ -5,12 +5,17 @@ export interface Assignment {
   courseName: string
   courseColor: string
   dueAt: string | null  // ISO 8601, null = no due date
-  type: 'assignment' | 'quiz' | 'discussion' | 'announcement'
+  type: 'assignment' | 'quiz' | 'discussion' | 'announcement' | 'creative' | 'resubmission'
   submissionState: 'submitted' | 'unsubmitted' | 'graded' | 'unknown'
   pointsPossible: number | null
   canvasUrl: string
   isOverdue: boolean
-  source: 'rest' | 'ical' | 'graphql' | 'manual'
+  source: 'rest' | 'ical' | 'graphql' | 'manual' | 'cse-site'
+}
+
+export interface CseSiteEntry {
+  url: string
+  courseName: string
 }
 
 export interface PersonalTask {

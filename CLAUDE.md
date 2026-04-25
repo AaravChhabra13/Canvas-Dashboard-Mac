@@ -71,6 +71,37 @@ local app. No user accounts are created or managed anywhere.
 - Fall back to iCal if GraphQL request fails
 - Works for UW students who cannot use PATs
 
+### Phase 4.1.1 — UW CSE course site scraper (COMPLETE)
+Many UW CSE courses have their own websites separate from Canvas at:
+`https://courses.cs.washington.edu/courses/cseXXX/YYqq/`
+This phase scrapes the /assignments/ subpage of these sites and merges
+the results with Canvas assignments under the same course.
+
+Key files:
+- electron/cseScraper.ts — scrapes CSE site /assignments/ page using axios,
+  parses HTML to extract title, due date, URL for each assignment
+  URL format: https://courses.cs.washington.edu/courses/cseXXX/YYqq/
+  where YY = 2-digit year and qq = quarter code:
+  au = Autumn, wi = Winter, sp = Spring, su = Summer
+  Examples: 25au, 26wi, 26sp, 26su
+  The user pastes the full URL for their current quarter manually
+- Assignment type updated in src/shared/types.ts — source field now includes
+  'cse-site' as a valid value
+- electron/sync.ts — after Canvas sync, runs CSE scraper for each saved site
+  URL and merges/deduplicates results preferring CSE site URLs
+- electron-store key cseSiteUrls — array of {url, courseName} objects
+- Settings panel — new 'UW CSE Course Sites' section to add/remove site URLs
+- AssignmentItem.tsx — assignments from CSE site show a small 'CSE' badge
+
+Assignment types from CSE sites:
+- P# items = Programming Assignments
+- C# items = Creative Projects  
+- R# items = Resubmissions
+- Clicking an assignment opens the specification PDF or EdStem submission link
+
+Onboarding: optional step after main Canvas setup asking if user has UW CSE
+courses — skippable for non-CSE students.
+
 ### Phase 4.2 — Onboarding setup guide
 Build a proper guided onboarding that explains all three connection options
 clearly to users who have no idea what iCal, REST API, or GraphQL means.

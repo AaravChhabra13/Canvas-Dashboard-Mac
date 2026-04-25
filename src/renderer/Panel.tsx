@@ -7,7 +7,7 @@ import {
 import { formatDistanceToNowStrict } from 'date-fns'
 import { AssignmentItem } from './AssignmentItem'
 import { groupAssignments, GROUP_ORDER, GROUP_LABELS } from '../lib/groupAssignments'
-import type { Assignment, Course, PersonalTask, Settings, SyncState } from '../shared/types'
+import type { Assignment, Course, CseSiteEntry, PersonalTask, Settings, SyncState } from '../shared/types'
 
 // ── Personal task helper ──────────────────────────────────────────────────────
 
@@ -147,11 +147,37 @@ function SettingsPanel({
   const [hasExistingToken, setHasExistingToken] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // CSE site URLs
+  const [cseSiteUrls, setCseSiteUrls] = useState<CseSiteEntry[]>([])
+  const [newCseUrl, setNewCseUrl] = useState('')
+  const [newCseCourseName, setNewCseCourseName] = useState('')
+  const [cseSaving, setCseSaving] = useState(false)
+
   useEffect(() => {
     window.ipcRenderer.invoke('token:check').then((v: unknown) => setHasExistingToken(v as boolean))
     window.ipcRenderer.invoke('cookie:check').then((v: unknown) => setHasCookie(v as boolean))
+    window.ipcRenderer.invoke('cse-sites:get').then((v: unknown) => setCseSiteUrls(v as CseSiteEntry[]))
   }, [])
   useEffect(() => { setLocalCourses(courses) }, [courses])
+
+  async function handleAddCseSite() {
+    const url = newCseUrl.trim()
+    const name = newCseCourseName.trim()
+    if (!url || !name) return
+    setCseSaving(true)
+    const updated = [...cseSiteUrls, { url, courseName: name }]
+    const saved = await window.ipcRenderer.invoke('cse-sites:save', updated) as CseSiteEntry[]
+    setCseSiteUrls(saved)
+    setNewCseUrl('')
+    setNewCseCourseName('')
+    setCseSaving(false)
+  }
+
+  async function handleRemoveCseSite(index: number) {
+    const updated = cseSiteUrls.filter((_, i) => i !== index)
+    const saved = await window.ipcRenderer.invoke('cse-sites:save', updated) as CseSiteEntry[]
+    setCseSiteUrls(saved)
+  }
 
   const toggleLead = (v: number) => setLeadTimes(prev => {
     const next = new Set(prev); next.has(v) ? next.delete(v) : next.add(v); return next
@@ -366,6 +392,56 @@ function SettingsPanel({
           <p className="text-[11px] text-muted-foreground">Course colors apply on next sync</p>
         </div>
       )}
+
+      {/* UW CSE Course Sites */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs uppercase tracking-wider text-muted-foreground">UW CSE Course Sites</label>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          Add your CSE course websites to pull assignments directly from course pages
+        </p>
+
+        {/* Existing entries */}
+        {cseSiteUrls.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            {cseSiteUrls.map((entry, i) => (
+              <div key={i} className="glass-inset rounded-xl px-3 py-2 flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium truncate">{entry.courseName}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">{entry.url}</div>
+                </div>
+                <button
+                  onClick={() => handleRemoveCseSite(i)}
+                  className="text-[10px] px-2 py-1 rounded-lg hover:bg-white/5 transition-colors shrink-0"
+                  style={{ color: 'hsl(var(--danger))' }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Add new entry */}
+        <input
+          type="url" value={newCseUrl} onChange={e => setNewCseUrl(e.target.value)}
+          placeholder="https://courses.cs.washington.edu/courses/cseXXX/26sp/"
+          spellCheck={false} className={inputCls}
+        />
+        <input
+          type="text" value={newCseCourseName} onChange={e => setNewCseCourseName(e.target.value)}
+          placeholder="Course name (e.g. CSE 123)"
+          spellCheck={false} className={inputCls}
+          onKeyDown={e => { if (e.key === 'Enter') handleAddCseSite() }}
+        />
+        <button
+          onClick={handleAddCseSite}
+          disabled={!newCseUrl.trim() || !newCseCourseName.trim() || cseSaving}
+          className="text-xs py-2 rounded-xl font-medium text-primary-foreground disabled:opacity-40 transition-opacity"
+          style={{ background: 'var(--gradient-primary)' }}
+        >
+          {cseSaving ? 'Adding…' : 'Add Site'}
+        </button>
+      </div>
 
       {/* Save */}
       <button
