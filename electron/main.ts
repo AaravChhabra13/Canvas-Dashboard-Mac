@@ -24,16 +24,11 @@ let currentToday = 0
 // ── Tray icon ─────────────────────────────────────────────────────────────────
 
 function makeTrayIcon(): Electron.NativeImage {
-  // Plain template image — auto-inverts for dark/light menu bar
-  const size = 16
-  const buf = Buffer.alloc(size * size * 4, 0)
-  for (let i = 0; i < size * size; i++) buf[i * 4 + 3] = 255
-  const img = nativeImage.createFromBitmap(buf, { width: size, height: size })
+  const img = nativeImage.createFromPath(
+    path.join(process.env.APP_ROOT, 'resources/icons/tray-icon.png'),
+  )
   img.setTemplateImage(true)
-  return img
-  // Colored badge circle is commented out — replaced by tray title number
-  // const [bv, gv, rv] = overdue > 0 ? [68, 68, 239] : [22, 115, 249]
-  // ...
+  return img.resize({ width: 25, height: 25 })
 }
 
 function updateTrayBadge(): void {
@@ -150,7 +145,12 @@ function togglePanel(): void {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
-  if (process.platform === 'darwin') app.dock.hide()
+  if (process.platform === 'darwin') {
+    app.dock.hide()
+    app.dock.setIcon(nativeImage.createFromPath(
+      path.join(process.env.APP_ROOT, 'resources/icons/app-icon-dark.png'),
+    ))
+  }
 
   tray = new Tray(makeTrayIcon())
   tray.setToolTip('Canvas Dashboard')

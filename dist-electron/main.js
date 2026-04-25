@@ -33625,12 +33625,11 @@ let onboardingWin = null;
 let lastBlurTime = 0;
 let currentToday = 0;
 function makeTrayIcon() {
-  const size = 16;
-  const buf = Buffer.alloc(size * size * 4, 0);
-  for (let i = 0; i < size * size; i++) buf[i * 4 + 3] = 255;
-  const img = electron.nativeImage.createFromBitmap(buf, { width: size, height: size });
+  const img = electron.nativeImage.createFromPath(
+    path$1.join(process.env.APP_ROOT, "resources/icons/tray-icon.png")
+  );
   img.setTemplateImage(true);
-  return img;
+  return img.resize({ width: 25, height: 25 });
 }
 function updateTrayBadge() {
   if (!tray) return;
@@ -33727,7 +33726,12 @@ function togglePanel() {
   panel.isVisible() ? panel.hide() : showPanel();
 }
 electron.app.whenReady().then(() => {
-  if (process.platform === "darwin") electron.app.dock.hide();
+  if (process.platform === "darwin") {
+    electron.app.dock.hide();
+    electron.app.dock.setIcon(electron.nativeImage.createFromPath(
+      path$1.join(process.env.APP_ROOT, "resources/icons/app-icon-dark.png")
+    ));
+  }
   tray = new electron.Tray(makeTrayIcon());
   tray.setToolTip("Canvas Dashboard");
   tray.on("click", togglePanel);
