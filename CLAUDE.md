@@ -52,7 +52,16 @@ Read it before making any decisions about architecture or implementation.
   animated assignment rows, course color coding, overdue/today color labels,
   clear overdue button, settings as animated page, course drill-down
 
-## Phase 4 — Authentication and moving off VS Code (PLANNED)
+## Phase 4 — Canvas data enrichment and standalone app (PLANNED)
+
+### Note on authentication
+Canvas Companion is a local personal app — no backend, no server, no accounts.
+Each user runs their own copy with their own credentials stored locally.
+Authentication (OAuth, Supabase, etc.) is NOT needed for this model and is
+out of scope until a potential Version 2.0 web/cloud rebuild.
+The three connection methods (iCal, REST API, Session Cookie) are not
+"login" methods — they are just ways to pull data from Canvas into the
+local app. No user accounts are created or managed anywhere.
 
 ### Phase 4.1 — Canvas GraphQL API
 - Implement Canvas GraphQL API using browser session cookie
@@ -105,6 +114,15 @@ Structure:
 - After completing setup, first sync runs and shows assignment count
 - Guide pages use framer-motion slide animations matching the rest of the UI
 - All text written in plain friendly language, no technical jargon
+
+### Phase 4.3 — Standalone app outside VS Code
+- Build the app as a proper standalone .app using electron-builder
+- App runs from Applications folder like any normal Mac app
+- No terminal needed to launch — double click to open
+- Right-click tray icon to quit instead of closing terminal
+- Auto-launches on login via app.setLoginItemSettings
+- Unsigned build for personal use — right-click Open to bypass Gatekeeper
+- Document this limitation clearly in onboarding
 
 ## Phase 5 — Smart deadline intelligence (PLANNED)
 
@@ -251,6 +269,13 @@ Features to build after the initial public release:
 - Quick capture global hotkey
 - Additional time estimate options and productivity insights
 - User-requested features based on feedback after open-source release
+
+### Version 2.0 — Future web/cloud rebuild (NOT in scope now)
+If Canvas Companion ever becomes a web service with shared accounts:
+- Would require a backend (Supabase or similar)
+- OAuth 2.0 login with Canvas per institution
+- User accounts, cloud sync, web dashboard
+- This is a complete rebuild, not an extension of the current app
 
 ## I know Java but not JavaScript/TypeScript
 Explain things in Java terms when helpful.
