@@ -33087,7 +33087,6 @@ function tokenStore() {
   if (!_tokenStore) {
     _tokenStore = new ElectronStore({
       name: "token",
-      name: "token",
       cwd: electron.app.getPath("userData"),
       defaults: { encryptedToken: "" }
     });
@@ -33378,17 +33377,23 @@ async function fetchAssignmentsFromIcal(icalUrl) {
       const uid = event.uid || `ical-${Date.now()}-${Math.random()}`;
       let courseName = "Unknown Course";
       let canvasUrl = "";
-      const lines = description2.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-      const urlIdx = lines.findIndex((l) => /^https?:\/\//i.test(l));
-      if (urlIdx > 0) {
-        courseName = lines[0];
-        canvasUrl = lines[urlIdx];
-      } else if (urlIdx === 0) {
-        canvasUrl = lines[0];
-      } else if (lines.length > 0) {
-        courseName = lines[0];
+      const bracketMatch = summary.match(/\[([^\]]+)\]\s*$/);
+      if (bracketMatch) {
+        courseName = bracketMatch[1].trim();
+      } else {
+        const lines = description2.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        const urlIdx = lines.findIndex((l) => /^https?:\/\//i.test(l));
+        if (urlIdx > 0) {
+          courseName = lines[0];
+        } else if (urlIdx >= 0) {
+        } else if (lines.length > 0) {
+          courseName = lines[0];
+        }
+        courseName = courseName.replace(/<[^>]+>/g, "").trim() || "Unknown Course";
       }
-      courseName = courseName.replace(/<[^>]+>/g, "").trim() || "Unknown Course";
+      const descLines = description2.split(/\r?\n/).map((l) => l.trim());
+      const urlLine = descLines.find((l) => /^https?:\/\//i.test(l));
+      if (urlLine) canvasUrl = urlLine;
       assignments2.push({
         id: uid,
         title: summary,
@@ -33453,7 +33458,8 @@ const SETTINGS_DEFAULTS = {
   lookaheadDays: 14,
   notificationLeadTimes: [1440, 120, 30],
   // 24 h, 2 h, 30 min
-  onboardingComplete: false
+  onboardingComplete: false,
+  hideOldOverdue: true
 };
 let store;
 let assignments = [];
@@ -33582,7 +33588,9 @@ function setupIPC(win, callbacks) {
     startSyncTimer(win, callbacks);
     return true;
   });
-  const isOnboardingComplete = getSettings().onboardingComplete;
+  const settings = getSettings();
+  const hasConfigured = !!getToken() || !!settings.canvasIcalUrl || !!settings.canvasSessionCookie;
+  const isOnboardingComplete = settings.onboardingComplete && hasConfigured;
   if (isOnboardingComplete) {
     runSync(win, callbacks);
     startSyncTimer(win, callbacks);
@@ -33602,47 +33610,19 @@ let tray = null;
 let panel = null;
 let onboardingWin = null;
 let lastBlurTime = 0;
-let currentOverdue = 0;
 let currentToday = 0;
-function makeTrayIcon(overdue = 0, today = 0) {
+function makeTrayIcon() {
   const size = 16;
-  const total = overdue + today;
   const buf = Buffer.alloc(size * size * 4, 0);
-  if (total === 0) {
-    for (let i = 0; i < size * size; i++) buf[i * 4 + 3] = 255;
-    const img2 = electron.nativeImage.createFromBitmap(buf, { width: size, height: size });
-    img2.setTemplateImage(true);
-    return img2;
-  }
-  const luma = electron.nativeTheme.shouldUseDarkColors ? 255 : 0;
-  for (let y = 3; y < size; y++) {
-    for (let x = 0; x < 11; x++) {
-      const idx = (y * size + x) * 4;
-      buf[idx] = luma;
-      buf[idx + 1] = luma;
-      buf[idx + 2] = luma;
-      buf[idx + 3] = 220;
-    }
-  }
-  const [bv, gv, rv] = overdue > 0 ? [68, 68, 239] : [22, 115, 249];
-  const cx = 12, cy = 4, r = 3.5;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      if (Math.sqrt((x - cx) ** 2 + (y - cy) ** 2) <= r) {
-        const idx = (y * size + x) * 4;
-        buf[idx] = bv;
-        buf[idx + 1] = gv;
-        buf[idx + 2] = rv;
-        buf[idx + 3] = 255;
-      }
-    }
-  }
+  for (let i = 0; i < size * size; i++) buf[i * 4 + 3] = 255;
   const img = electron.nativeImage.createFromBitmap(buf, { width: size, height: size });
-  img.setTemplateImage(false);
+  img.setTemplateImage(true);
   return img;
 }
-function updateTrayIcon() {
-  if (tray) tray.setImage(makeTrayIcon(currentOverdue, currentToday));
+function updateTrayBadge() {
+  if (!tray) return;
+  tray.setImage(makeTrayIcon());
+  tray.setTitle(currentToday > 0 ? ` ${currentToday}` : "");
 }
 function createPanel() {
   panel = new electron.BrowserWindow({
@@ -33738,7 +33718,7 @@ electron.app.whenReady().then(() => {
   tray = new electron.Tray(makeTrayIcon());
   tray.setToolTip("Canvas Dashboard");
   tray.on("click", togglePanel);
-  electron.nativeTheme.on("updated", updateTrayIcon);
+  electron.nativeTheme.on("updated", updateTrayBadge);
   createPanel();
   const { triggerSync, isOnboardingComplete } = setupIPC(panel, {
     showPanel: () => showPanel(),
@@ -33746,10 +33726,9 @@ electron.app.whenReady().then(() => {
       onboardingWin == null ? void 0 : onboardingWin.close();
       onboardingWin = null;
     },
-    onBadgeUpdate: (overdue, today) => {
-      currentOverdue = overdue;
+    onBadgeUpdate: (_overdue, today) => {
       currentToday = today;
-      updateTrayIcon();
+      updateTrayBadge();
     }
   });
   if (!isOnboardingComplete) {

@@ -19,54 +19,28 @@ let tray: Tray | null = null
 let panel: BrowserWindow | null = null
 let onboardingWin: BrowserWindow | null = null
 let lastBlurTime = 0
-let currentOverdue = 0
 let currentToday = 0
 
 // ── Tray icon ─────────────────────────────────────────────────────────────────
 
-function makeTrayIcon(overdue = 0, today = 0): Electron.NativeImage {
+function makeTrayIcon(): Electron.NativeImage {
+  // Plain template image — auto-inverts for dark/light menu bar
   const size = 16
-  const total = overdue + today
   const buf = Buffer.alloc(size * size * 4, 0)
-
-  if (total === 0) {
-    // Plain template image: all-black pixels, auto-inverts for dark menu bar
-    for (let i = 0; i < size * size; i++) buf[i * 4 + 3] = 255
-    const img = nativeImage.createFromBitmap(buf, { width: size, height: size })
-    img.setTemplateImage(true)
-    return img
-  }
-
-  // Base icon: black or white depending on menu bar appearance
-  const luma = nativeTheme.shouldUseDarkColors ? 255 : 0
-  for (let y = 3; y < size; y++) {
-    for (let x = 0; x < 11; x++) {
-      const idx = (y * size + x) * 4
-      // BGRA
-      buf[idx] = luma; buf[idx + 1] = luma; buf[idx + 2] = luma; buf[idx + 3] = 220
-    }
-  }
-
-  // Colored badge circle in top-right corner
-  // #ef4444 (red) BGRA: 68,68,239,255 — #f97316 (orange) BGRA: 22,115,249,255
-  const [bv, gv, rv] = overdue > 0 ? [68, 68, 239] : [22, 115, 249]
-  const cx = 12, cy = 4, r = 3.5
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      if (Math.sqrt((x - cx) ** 2 + (y - cy) ** 2) <= r) {
-        const idx = (y * size + x) * 4
-        buf[idx] = bv; buf[idx + 1] = gv; buf[idx + 2] = rv; buf[idx + 3] = 255
-      }
-    }
-  }
-
+  for (let i = 0; i < size * size; i++) buf[i * 4 + 3] = 255
   const img = nativeImage.createFromBitmap(buf, { width: size, height: size })
-  img.setTemplateImage(false)
+  img.setTemplateImage(true)
   return img
+  // Colored badge circle is commented out — replaced by tray title number
+  // const [bv, gv, rv] = overdue > 0 ? [68, 68, 239] : [22, 115, 249]
+  // ...
 }
 
-function updateTrayIcon(): void {
-  if (tray) tray.setImage(makeTrayIcon(currentOverdue, currentToday))
+function updateTrayBadge(): void {
+  if (!tray) return
+  tray.setImage(makeTrayIcon())
+  // Show today's count as a clean text label next to the icon; clear when zero
+  tray.setTitle(currentToday > 0 ? ` ${currentToday}` : '')
 }
 
 // ── Windows ───────────────────────────────────────────────────────────────────
@@ -183,17 +157,16 @@ app.whenReady().then(() => {
   tray.on('click', togglePanel)
 
   // Regenerate icon when menu bar appearance changes
-  nativeTheme.on('updated', updateTrayIcon)
+  nativeTheme.on('updated', updateTrayBadge)
 
   createPanel()
 
   const { triggerSync, isOnboardingComplete } = setupIPC(panel!, {
     showPanel: () => showPanel(),
     closeOnboarding: () => { onboardingWin?.close(); onboardingWin = null },
-    onBadgeUpdate: (overdue, today) => {
-      currentOverdue = overdue
+    onBadgeUpdate: (_overdue, today) => {
       currentToday = today
-      updateTrayIcon()
+      updateTrayBadge()
     },
   })
 

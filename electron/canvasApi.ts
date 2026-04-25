@@ -7,7 +7,7 @@ import type { Assignment, Course } from '../src/shared/types'
 let _tokenStore: Store<{ encryptedToken: string }> | null = null
 function tokenStore(): Store<{ encryptedToken: string }> {
   if (!_tokenStore) {
-    _tokenStore = new Store<{ encryptedToken: string }>({ name: "token", 
+    _tokenStore = new Store<{ encryptedToken: string }>({
       name: 'token',
       cwd: app.getPath('userData'),
       defaults: { encryptedToken: '' },

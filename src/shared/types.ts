@@ -52,4 +52,5 @@ export interface Settings {
   lookaheadDays: number
   notificationLeadTimes: number[]  // minutes before due date (e.g. 1440=24h, 120=2h, 30=30min)
   onboardingComplete: boolean
+  hideOldOverdue: boolean
 }

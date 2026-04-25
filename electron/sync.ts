@@ -99,22 +99,31 @@ async function fetchAssignmentsFromIcal(icalUrl: string): Promise<Assignment[]> 
       const description: string = event.description || ''
       const uid: string = event.uid || `ical-${Date.now()}-${Math.random()}`
 
-      // Canvas iCal description: first non-empty line = course name, then URL
+      // Canvas iCal SUMMARY contains course name in brackets: "Assignment Title [COURSE CODE]"
+      // Extract course name from brackets first, fall back to DESCRIPTION parsing
       let courseName = 'Unknown Course'
       let canvasUrl = ''
 
-      const lines = description.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean)
-      const urlIdx = lines.findIndex((l: string) => /^https?:\/\//i.test(l))
-      if (urlIdx > 0) {
-        courseName = lines[0]
-        canvasUrl = lines[urlIdx]
-      } else if (urlIdx === 0) {
-        canvasUrl = lines[0]
-      } else if (lines.length > 0) {
-        courseName = lines[0]
+      const bracketMatch = summary.match(/\[([^\]]+)\]\s*$/)
+      if (bracketMatch) {
+        courseName = bracketMatch[1].trim()
+      } else {
+        const lines = description.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean)
+        const urlIdx = lines.findIndex((l: string) => /^https?:\/\//i.test(l))
+        if (urlIdx > 0) {
+          courseName = lines[0]
+        } else if (urlIdx >= 0) {
+          // URL is first line — no course name in description
+        } else if (lines.length > 0) {
+          courseName = lines[0]
+        }
+        courseName = courseName.replace(/<[^>]+>/g, '').trim() || 'Unknown Course'
       }
 
-      courseName = courseName.replace(/<[^>]+>/g, '').trim() || 'Unknown Course'
+      // Extract canvas URL from description
+      const descLines = description.split(/\r?\n/).map((l: string) => l.trim())
+      const urlLine = descLines.find((l: string) => /^https?:\/\//i.test(l))
+      if (urlLine) canvasUrl = urlLine
 
       assignments.push({
         id: uid,

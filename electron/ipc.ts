@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, shell, app } from 'electron'
 import Store from 'electron-store'
 import { syncAll } from './sync'
-import { saveToken, deleteToken, hasToken, validateToken } from './canvasApi'
+import { saveToken, deleteToken, hasToken, validateToken, getToken } from './canvasApi'
 import { checkAndFireNotifications, requestNotificationPermission } from './notifications'
 import type { Assignment, Course, PersonalTask, Settings, SyncState } from '../src/shared/types'
 
@@ -20,6 +20,7 @@ const SETTINGS_DEFAULTS: Settings = {
   lookaheadDays: 14,
   notificationLeadTimes: [1440, 120, 30],  // 24 h, 2 h, 30 min
   onboardingComplete: false,
+  hideOldOverdue: true,
 }
 
 // Initialized inside setupIPC (after app.ready) so app.getPath() is available
@@ -191,7 +192,11 @@ export function setupIPC(
     return true
   })
 
-  const isOnboardingComplete = getSettings().onboardingComplete
+  // Treat onboarding as complete only if the user has actually configured a data source.
+  // This prevents skipping onboarding when settings exist but credentials were removed.
+  const settings = getSettings()
+  const hasConfigured = !!getToken() || !!settings.canvasIcalUrl || !!settings.canvasSessionCookie
+  const isOnboardingComplete = settings.onboardingComplete && hasConfigured
 
   if (isOnboardingComplete) {
     runSync(win, callbacks)

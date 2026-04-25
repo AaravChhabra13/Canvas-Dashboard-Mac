@@ -1,68 +1,15 @@
-import { useState, useEffect, useCallback, useContext, createContext } from 'react'
-import type { CSSProperties } from 'react'
-import type { Assignment, BucketedAssignments, Course, PersonalTask, Settings, SyncState } from '../shared/types'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import {
+  RefreshCw, Settings as SettingsIcon, BookOpen, Inbox,
+  CheckCheck, ChevronRight, ArrowLeft, Save, EyeOff, Bell, Plus,
+} from 'lucide-react'
+import { formatDistanceToNowStrict } from 'date-fns'
+import { AssignmentItem } from './AssignmentItem'
+import { groupAssignments, GROUP_ORDER, GROUP_LABELS } from '../lib/groupAssignments'
+import type { Assignment, Course, PersonalTask, Settings, SyncState } from '../shared/types'
 
-// ── Theme ─────────────────────────────────────────────────────────────────────
-
-interface Theme {
-  bg: string
-  text: string
-  textMuted: string
-  textFaint: string
-  border: string
-  hover: string
-  inputBg: string
-  inputBorder: string
-  inputColor: string
-  sectionLabel: string
-  checkboxAccent: string
-}
-
-const LIGHT: Theme = {
-  bg: 'rgba(250,250,250,0.93)',
-  text: '#1a1a1a',
-  textMuted: '#777',
-  textFaint: '#bbb',
-  border: 'rgba(0,0,0,0.08)',
-  hover: 'rgba(0,0,0,0.055)',
-  inputBg: '#fff',
-  inputBorder: '#d1d5db',
-  inputColor: '#111',
-  sectionLabel: '#9ca3af',
-  checkboxAccent: '#3b82f6',
-}
-
-const DARK: Theme = {
-  bg: 'rgba(22,22,26,0.93)',
-  text: '#f0f0f0',
-  textMuted: '#999',
-  textFaint: '#555',
-  border: 'rgba(255,255,255,0.1)',
-  hover: 'rgba(255,255,255,0.07)',
-  inputBg: 'rgba(55,55,62,0.95)',
-  inputBorder: 'rgba(255,255,255,0.15)',
-  inputColor: '#f0f0f0',
-  sectionLabel: '#666',
-  checkboxAccent: '#3b82f6',
-}
-
-const ThemeCtx = createContext<Theme>(LIGHT)
-const useTheme = () => useContext(ThemeCtx)
-
-function useColorScheme(): 'light' | 'dark' {
-  const [scheme, setScheme] = useState<'light' | 'dark'>(() =>
-    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
-  )
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = (e: MediaQueryListEvent) => setScheme(e.matches ? 'dark' : 'light')
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [])
-  return scheme
-}
-
-// ── Personal task helpers ─────────────────────────────────────────────────────
+// ── Personal task helper ──────────────────────────────────────────────────────
 
 function personalToAssignment(t: PersonalTask): Assignment {
   const now = new Date()
@@ -82,325 +29,91 @@ function personalToAssignment(t: PersonalTask): Assignment {
   }
 }
 
-// ── Bucketing ─────────────────────────────────────────────────────────────────
+// ── Tab button ────────────────────────────────────────────────────────────────
 
-function bucketAssignments(list: Assignment[]): BucketedAssignments {
-  const now = new Date()
-  const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 999)
-  const tomorrowStart = new Date(now); tomorrowStart.setDate(tomorrowStart.getDate() + 1); tomorrowStart.setHours(0, 0, 0, 0)
-  const tomorrowEnd = new Date(tomorrowStart); tomorrowEnd.setHours(23, 59, 59, 999)
-  const weekEnd = new Date(now); weekEnd.setDate(weekEnd.getDate() + 7); weekEnd.setHours(23, 59, 59, 999)
-
-  return {
-    overdue: list.filter(a => a.isOverdue && a.dueAt !== null),
-    today: list.filter(a => {
-      if (!a.dueAt || a.isOverdue) return false
-      const d = new Date(a.dueAt)
-      return d >= now && d <= todayEnd
-    }),
-    tomorrow: list.filter(a => {
-      if (!a.dueAt || a.isOverdue) return false
-      const d = new Date(a.dueAt)
-      return d >= tomorrowStart && d <= tomorrowEnd
-    }),
-    thisWeek: list.filter(a => {
-      if (!a.dueAt || a.isOverdue) return false
-      const d = new Date(a.dueAt)
-      return d > tomorrowEnd && d <= weekEnd
-    }),
-    comingUp: list.filter(a => {
-      if (!a.dueAt || a.isOverdue) return false
-      return new Date(a.dueAt) > weekEnd
-    }),
-    noDueDate: list.filter(a => a.dueAt === null),
-  }
-}
-
-// ── Formatting ────────────────────────────────────────────────────────────────
-
-function formatDue(iso: string): string {
-  const d = new Date(iso)
-  const now = new Date()
-  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1)
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  if (d.toDateString() === now.toDateString()) return `Today ${time}`
-  if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow ${time}`
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time
-}
-
-function formatLastSync(iso: string | null): string {
-  if (!iso) return 'Never synced'
-  return `Updated ${new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-}
-
-// ── Shared style helpers ──────────────────────────────────────────────────────
-
-function fieldStyle(theme: Theme, extra?: CSSProperties): CSSProperties {
-  return {
-    width: '100%', fontSize: 12, padding: '5px 7px',
-    border: `1px solid ${theme.inputBorder}`, borderRadius: 5,
-    outline: 'none', background: theme.inputBg, color: theme.inputColor,
-    boxSizing: 'border-box', WebkitUserSelect: 'text' as never,
-    ...extra,
-  }
-}
-
-function smallBtn(bg: string, extra?: CSSProperties): CSSProperties {
-  return {
-    fontSize: 11, padding: '5px 10px',
-    background: bg, color: '#fff',
-    border: 'none', borderRadius: 5,
-    cursor: 'pointer', fontWeight: 600,
-    ...extra,
-  }
-}
-
-// ── Submission badge ──────────────────────────────────────────────────────────
-
-function SubmissionBadge({ state }: { state: Assignment['submissionState'] }) {
-  if (state === 'submitted') return <span style={{ fontSize: 11, color: '#22c55e', flexShrink: 0 }} title="Submitted">✓</span>
-  if (state === 'graded') return <span style={{ fontSize: 11, color: '#3b82f6', flexShrink: 0 }} title="Graded">★</span>
-  return null
-}
-
-// ── Assignment row ────────────────────────────────────────────────────────────
-
-function AssignmentRow({
-  a, onComplete, onDelete,
+const TabButton = ({
+  active, onClick, children,
 }: {
-  a: Assignment
-  onComplete: (id: string) => void
-  onDelete?: (id: string) => void
-}) {
-  const theme = useTheme()
-  const [hovered, setHovered] = useState(false)
+  active: boolean; onClick: () => void; children: React.ReactNode
+}) => (
+  <button
+    onClick={onClick}
+    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+      active
+        ? 'bg-white/10 text-foreground'
+        : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+    }`}
+  >
+    {children}
+  </button>
+)
 
-  return (
-    <div
-      style={{
-        display: 'flex', alignItems: 'center', padding: '5px 14px', gap: 8,
-        background: hovered ? theme.hover : 'transparent', transition: 'background 0.1s',
-        borderLeft: a.source === 'manual' ? `2px solid ${a.courseColor}` : '2px solid transparent',
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {/* Color indicator */}
-      {a.source === 'manual'
-        ? <span style={{ fontSize: 11, color: a.courseColor, flexShrink: 0, lineHeight: 1 }}>✎</span>
-        : <div style={{ width: 7, height: 7, borderRadius: '50%', background: a.courseColor, flexShrink: 0 }} />
-      }
+// ── Grouped assignment list ───────────────────────────────────────────────────
 
-      {/* Title */}
-      <span
-        onClick={() => a.canvasUrl && window.ipcRenderer.send('open-external', a.canvasUrl)}
-        style={{
-          flex: 1, fontSize: 13, color: theme.text,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          cursor: a.canvasUrl ? 'pointer' : 'default',
-        }}
-      >
-        {a.title}
-      </span>
+const TODAY_COLOR = 'hsl(35 80% 60%)'
 
-      {/* Due time — hide on hover to make room for actions */}
-      {a.dueAt && !hovered && (
-        <span style={{ fontSize: 11, color: theme.textMuted, flexShrink: 0 }}>
-          {formatDue(a.dueAt)}
-        </span>
-      )}
-
-      {!hovered && <SubmissionBadge state={a.submissionState} />}
-
-      {/* Action buttons on hover */}
-      {hovered && (
-        <>
-          {a.source === 'manual' && onDelete && (
-            <button
-              onClick={e => { e.stopPropagation(); onDelete(a.id) }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#ef4444', padding: '0 2px', flexShrink: 0, lineHeight: 1 }}
-              title="Delete task"
-            >✕</button>
-          )}
-          <button
-            onClick={e => { e.stopPropagation(); onComplete(a.id) }}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: '#22c55e', padding: '0 2px', flexShrink: 0, lineHeight: 1, fontWeight: 600 }}
-            title="Mark as done"
-          >✓</button>
-        </>
-      )}
-    </div>
-  )
-}
-
-// ── Completed section ─────────────────────────────────────────────────────────
-
-function CompletedRow({ a, onUnmark }: { a: Assignment; onUnmark: (id: string) => void }) {
-  const theme = useTheme()
-  const [hovered, setHovered] = useState(false)
-  return (
-    <div
-      style={{
-        display: 'flex', alignItems: 'center', padding: '4px 14px', gap: 8, opacity: 0.55,
-        background: hovered ? theme.hover : 'transparent', transition: 'background 0.1s',
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <div style={{ width: 7, height: 7, borderRadius: '50%', background: a.courseColor, flexShrink: 0 }} />
-      <span style={{
-        flex: 1, fontSize: 12, color: theme.textMuted,
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'line-through',
-      }}>
-        {a.title}
-      </span>
-      {hovered && (
-        <button
-          onClick={() => onUnmark(a.id)}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: theme.textMuted, padding: '0 2px', flexShrink: 0 }}
-          title="Unmark done"
-        >↩</button>
-      )}
-    </div>
-  )
-}
-
-function CompletedSection({ items, onUnmark }: { items: Assignment[]; onUnmark: (id: string) => void }) {
-  const theme = useTheme()
-  const [open, setOpen] = useState(false)
-  if (items.length === 0) return null
-  return (
-    <div style={{ marginTop: 6, borderTop: `1px solid ${theme.border}` }}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer', width: '100%',
-          display: 'flex', alignItems: 'center', gap: 6, padding: '5px 14px 3px',
-        }}
-      >
-        <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#9ca3af' }} />
-        <span style={{ fontSize: 10, fontWeight: 700, color: theme.sectionLabel, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-          Completed · {items.length}
-        </span>
-        <span style={{ fontSize: 10, color: theme.sectionLabel, marginLeft: 'auto' }}>{open ? '▴' : '▾'}</span>
-      </button>
-      {open && items.map(a => <CompletedRow key={a.id} a={a} onUnmark={onUnmark} />)}
-    </div>
-  )
-}
-
-// ── Bucket section ────────────────────────────────────────────────────────────
-
-const BUCKET_META: Array<{ key: keyof BucketedAssignments; label: string; color: string }> = [
-  { key: 'overdue',   label: 'Overdue',      color: '#ef4444' },
-  { key: 'today',     label: 'Due Today',    color: '#f97316' },
-  { key: 'tomorrow',  label: 'Due Tomorrow', color: '#eab308' },
-  { key: 'thisWeek',  label: 'This Week',    color: '#22c55e' },
-  { key: 'comingUp',  label: 'Coming Up',    color: '#3b82f6' },
-  { key: 'noDueDate', label: 'No Due Date',  color: '#9ca3af' },
-]
-
-function SectionHeader({ label, color, count }: { label: string; color: string; count: number }) {
-  const theme = useTheme()
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', padding: '5px 14px 3px', gap: 6 }}>
-      <div style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
-      <span style={{ fontSize: 10, fontWeight: 700, color: theme.sectionLabel, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-        {label} · {count}
-      </span>
-    </div>
-  )
-}
-
-// ── Course filter tabs ────────────────────────────────────────────────────────
-
-function CourseTab({ label, color, active, onClick }: { label: string; color: string; active: boolean; onClick: () => void }) {
-  const theme = useTheme()
-  const [hovered, setHovered] = useState(false)
-  return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        flexShrink: 0, padding: '3px 9px', fontSize: 11,
-        fontWeight: active ? 600 : 400,
-        background: active ? `${color}22` : hovered ? theme.hover : 'transparent',
-        color: active ? color : theme.textMuted,
-        border: active ? `1px solid ${color}55` : '1px solid transparent',
-        borderRadius: 12, cursor: 'pointer', whiteSpace: 'nowrap',
-        maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis',
-        transition: 'background 0.1s',
-      }}
-    >
-      {label}
-    </button>
-  )
-}
-
-function CourseFilterTabs({
-  courses, activeFilter, onSelect,
+const GroupedList = ({
+  groups, completed, onToggle, compact = false,
 }: {
-  courses: Course[]
-  activeFilter: string | null
-  onSelect: (id: string | null) => void
-}) {
-  const theme = useTheme()
-  const visible = courses.filter(c => !c.hidden)
-  if (visible.length === 0) return null
-  return (
-    <div style={{
-      display: 'flex', overflowX: 'auto', gap: 4,
-      padding: '5px 14px 5px', flexShrink: 0,
-      borderBottom: `1px solid ${theme.border}`,
-      // hide scrollbar but keep scroll
-      scrollbarWidth: 'none',
-    }}>
-      <CourseTab label="All" color="#888" active={activeFilter === null} onClick={() => onSelect(null)} />
-      {visible.map(c => (
-        <CourseTab key={c.id} label={c.name} color={c.color} active={activeFilter === c.id} onClick={() => onSelect(c.id)} />
-      ))}
+  groups: ReturnType<typeof groupAssignments>
+  completed: Set<string>
+  onToggle: (id: string) => void
+  compact?: boolean
+}) => (
+  <div className={`${compact ? '' : 'p-4'} flex flex-col gap-5`}>
+    {GROUP_ORDER.map((key) => {
+      const items = groups[key]
+      if (!items.length) return null
+      const labelColor =
+        key === 'overdue' ? 'hsl(var(--danger))'
+        : key === 'today' ? TODAY_COLOR
+        : 'hsl(var(--muted-foreground))'
+      return (
+        <section key={key} className="flex flex-col gap-2">
+          <div className="flex items-center gap-2 px-1">
+            <h2 className="text-xs font-semibold uppercase tracking-wider" style={{ color: labelColor }}>
+              {GROUP_LABELS[key]}
+            </h2>
+            <span className="text-[10px] text-muted-foreground/60">{items.length}</span>
+            <div className="flex-1 h-px bg-white/5" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {items.map((a, i) => (
+              <AssignmentItem
+                key={a.id}
+                assignment={a}
+                index={i}
+                completed={completed.has(a.id)}
+                onToggleComplete={onToggle}
+              />
+            ))}
+          </div>
+        </section>
+      )
+    })}
+  </div>
+)
+
+// ── Empty state ───────────────────────────────────────────────────────────────
+
+const EmptyState = () => (
+  <div className="p-8 flex flex-col items-center text-center gap-4 mt-6">
+    <div
+      className="w-16 h-16 rounded-2xl flex items-center justify-center"
+      style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-glow)' }}
+    >
+      <BookOpen className="w-8 h-8 text-primary-foreground" />
     </div>
-  )
-}
-
-// ── Add task form ─────────────────────────────────────────────────────────────
-
-function AddTaskForm({ onAdd, onCancel }: { onAdd: (title: string, dueAt: string) => void; onCancel: () => void }) {
-  const theme = useTheme()
-  const [title, setTitle] = useState('')
-  const [dueAt, setDueAt] = useState('')
-
-  const submit = () => { if (title.trim()) onAdd(title.trim(), dueAt) }
-
-  return (
-    <div style={{ padding: '8px 14px 10px', borderBottom: `1px solid ${theme.border}`, background: theme.hover }}>
-      <input
-        autoFocus
-        type="text"
-        placeholder="Task title"
-        value={title}
-        onChange={e => setTitle(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel() }}
-        style={{ ...fieldStyle(theme), marginBottom: 5 }}
-      />
-      <input
-        type="datetime-local"
-        value={dueAt}
-        onChange={e => setDueAt(e.target.value)}
-        style={fieldStyle(theme, { colorScheme: (theme === DARK ? 'dark' : 'light') as never })}
-      />
-      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-        <button onClick={onCancel} style={{ flex: 1, ...smallBtn('#9ca3af') }}>Cancel</button>
-        <button onClick={submit} disabled={!title.trim()} style={{ flex: 2, ...smallBtn(title.trim() ? '#3b82f6' : '#93c5fd') }}>
-          Add Task
-        </button>
-      </div>
+    <div>
+      <h3 className="text-base font-semibold mb-1">No assignments found</h3>
+      <p className="text-xs text-muted-foreground leading-relaxed max-w-[280px]">
+        All clear! No upcoming assignments right now.
+      </p>
     </div>
-  )
-}
+  </div>
+)
 
-// ── Settings panel ────────────────────────────────────────────────────────────
+// ── Settings panel (inline page, no overlay) ──────────────────────────────────
 
 const NOTIF_OPTIONS = [
   { label: '24 hours', value: 1440 },
@@ -409,40 +122,28 @@ const NOTIF_OPTIONS = [
   { label: '15 min',   value: 15   },
 ]
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  const theme = useTheme()
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 10, fontWeight: 600, color: theme.sectionLabel, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
-        {label}
-      </div>
-      {children}
-    </div>
-  )
-}
-
 function SettingsPanel({
-  settings, courses, onSave, onClose,
+  settings, courses, hideOldOverdue, onToggleHideOldOverdue, onSave,
 }: {
   settings: Settings
   courses: Course[]
+  hideOldOverdue: boolean
+  onToggleHideOldOverdue: (v: boolean) => void
   onSave: (s: Partial<Settings>, c?: Course[]) => Promise<void>
-  onClose: () => void
 }) {
-  const theme = useTheme()
-  const [baseUrl, setBaseUrl]     = useState(settings.canvasBaseUrl)
-  const [icalUrl, setIcalUrl]     = useState(settings.canvasIcalUrl)
-  const [cookie, setCookie]       = useState(settings.canvasSessionCookie)
+  const [baseUrl, setBaseUrl] = useState(settings.canvasBaseUrl)
+  const [icalUrl, setIcalUrl] = useState(settings.canvasIcalUrl)
+  const [cookie, setCookie] = useState(settings.canvasSessionCookie)
   const [showCookie, setShowCookie] = useState(false)
-  const [interval, setInterval]   = useState(settings.syncIntervalMinutes)
+  const [interval, setInterval] = useState(settings.syncIntervalMinutes)
   const [leadTimes, setLeadTimes] = useState(new Set(settings.notificationLeadTimes))
   const [localCourses, setLocalCourses] = useState<Course[]>(courses)
-  const [token, setToken]         = useState('')
+  const [token, setToken] = useState('')
   const [showToken, setShowToken] = useState(false)
   const [tokenStatus, setTokenStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [tokenError, setTokenError] = useState('')
   const [hasExistingToken, setHasExistingToken] = useState(false)
-  const [saving, setSaving]       = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     window.ipcRenderer.invoke('token:check').then((v: unknown) => setHasExistingToken(v as boolean))
@@ -453,7 +154,7 @@ function SettingsPanel({
     const next = new Set(prev); next.has(v) ? next.delete(v) : next.add(v); return next
   })
 
-  async function handleTestAndSave() {
+  async function handleTestToken() {
     setTokenStatus('testing'); setTokenError('')
     const valid = await window.ipcRenderer.invoke('token:validate', baseUrl.trim(), token.trim()) as boolean
     if (valid) {
@@ -482,123 +183,195 @@ function SettingsPanel({
       localCourses,
     )
     setSaving(false)
-    onClose()
   }
 
-  const fs = (extra?: CSSProperties) => fieldStyle(theme, extra)
-  const sb = (bg: string) => smallBtn(bg)
+  const inputCls = 'w-full glass-inset rounded-xl px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-primary/50'
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '8px 14px 12px' }}>
+    <div className="p-5 flex flex-col gap-4">
 
-      <Section label="Canvas URL">
-        <input type="url" value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
-          style={fs()} spellCheck={false} placeholder="https://canvas.uw.edu" />
-      </Section>
+      {/* Canvas URL */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs uppercase tracking-wider text-muted-foreground">Canvas URL</label>
+        <input
+          type="url" value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
+          placeholder="https://canvas.uw.edu" spellCheck={false} className={inputCls}
+        />
+      </div>
 
-      <Section label="API Token">
+      {/* iCal Feed URL */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs uppercase tracking-wider text-muted-foreground">iCal Feed URL</label>
+        <textarea
+          value={icalUrl} onChange={e => setIcalUrl(e.target.value)}
+          placeholder="https://canvas.uw.edu/feeds/calendars/user_….ics"
+          rows={3} spellCheck={false} className={`${inputCls} resize-none`}
+        />
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Canvas → Calendar → <span className="text-foreground">Calendar Feed</span> (bottom of page)
+        </p>
+      </div>
+
+      {/* API Token */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs uppercase tracking-wider text-muted-foreground">API Token</label>
         {hasExistingToken ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: '#22c55e', flex: 1 }}>✓ Token saved in system keychain</span>
-            <button onClick={handleRemoveToken} style={sb('#ef4444')}>Remove</button>
+          <div className="flex items-center gap-3">
+            <span className="text-xs flex-1" style={{ color: 'hsl(var(--success))' }}>✓ Token saved in system keychain</span>
+            <button onClick={handleRemoveToken} className="text-xs px-3 py-1.5 rounded-lg glass-inset hover:bg-white/5 transition-colors" style={{ color: 'hsl(var(--danger))' }}>Remove</button>
           </div>
         ) : (
           <>
-            <div style={{ position: 'relative' }}>
-              <input
-                type={showToken ? 'text' : 'password'} value={token}
+            <div className="relative">
+              <input type={showToken ? 'text' : 'password'} value={token}
                 onChange={e => { setToken(e.target.value); setTokenStatus('idle') }}
-                style={fs({ paddingRight: 48 })} placeholder="Paste token from Canvas" spellCheck={false}
+                placeholder="Paste token from Canvas" spellCheck={false} className={`${inputCls} pr-12`}
               />
-              <button onClick={() => setShowToken(v => !v)} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', fontSize: 10, color: theme.sectionLabel, cursor: 'pointer' }}>
+              <button onClick={() => setShowToken(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground hover:text-foreground">
                 {showToken ? 'Hide' : 'Show'}
               </button>
             </div>
-            {tokenStatus === 'ok'    && <div style={{ fontSize: 11, color: '#22c55e', marginTop: 3 }}>✓ Verified and saved</div>}
-            {tokenStatus === 'error' && <div style={{ fontSize: 11, color: '#ef4444', marginTop: 3 }}>{tokenError}</div>}
-            <button onClick={handleTestAndSave} disabled={!token.trim() || tokenStatus === 'testing'}
-              style={{ ...sb('#3b82f6'), marginTop: 5, width: '100%' }}>
+            {tokenStatus === 'ok'    && <p className="text-xs" style={{ color: 'hsl(var(--success))' }}>✓ Verified and saved</p>}
+            {tokenStatus === 'error' && <p className="text-xs" style={{ color: 'hsl(var(--danger))' }}>{tokenError}</p>}
+            <button onClick={handleTestToken} disabled={!token.trim() || tokenStatus === 'testing'}
+              className="text-xs py-2 rounded-xl font-medium text-primary-foreground disabled:opacity-40 transition-opacity"
+              style={{ background: 'var(--gradient-primary)' }}>
               {tokenStatus === 'testing' ? 'Verifying…' : 'Test & Save Token'}
             </button>
           </>
         )}
-      </Section>
+      </div>
 
-      <Section label="Session Cookie (Canvas GraphQL)">
-        <div style={{ position: 'relative' }}>
-          <input
-            type={showCookie ? 'text' : 'password'} value={cookie}
+      {/* Session Cookie */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs uppercase tracking-wider text-muted-foreground">Session Cookie (GraphQL)</label>
+        <div className="relative">
+          <input type={showCookie ? 'text' : 'password'} value={cookie}
             onChange={e => setCookie(e.target.value)}
-            style={fs({ paddingRight: 48 })} placeholder="Paste Cookie header value" spellCheck={false}
+            placeholder="Paste Cookie header value" spellCheck={false} className={`${inputCls} pr-12`}
           />
-          <button onClick={() => setShowCookie(v => !v)} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', fontSize: 10, color: theme.sectionLabel, cursor: 'pointer' }}>
+          <button onClick={() => setShowCookie(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground hover:text-foreground">
             {showCookie ? 'Hide' : 'Show'}
           </button>
         </div>
-        <div style={{ fontSize: 10, color: theme.sectionLabel, marginTop: 3 }}>
+        <p className="text-xs text-muted-foreground leading-relaxed">
           DevTools → Network → any Canvas request → Request Headers → Cookie
-        </div>
-      </Section>
+        </p>
+      </div>
 
-      <Section label="iCal Feed URL">
-        <input type="url" value={icalUrl} onChange={e => setIcalUrl(e.target.value)}
-          style={fs()} spellCheck={false} placeholder="https://canvas.uw.edu/feeds/calendars/user_….ics" />
-        <div style={{ fontSize: 10, color: theme.sectionLabel, marginTop: 3 }}>
-          Canvas → Calendar → Calendar Feed (bottom of page)
-        </div>
-      </Section>
-
-      <Section label="Auto-Sync Interval">
-        <select value={interval} onChange={e => setInterval(Number(e.target.value))}
-          style={{ ...fs(), appearance: 'auto' as never }}>
+      {/* Auto-sync interval */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs uppercase tracking-wider text-muted-foreground">Auto-Sync Interval</label>
+        <select value={interval} onChange={e => setInterval(Number(e.target.value))} className={`${inputCls} appearance-auto`}>
           {[15, 30, 60].map(v => <option key={v} value={v}>{v} minutes</option>)}
         </select>
-      </Section>
+      </div>
 
-      <Section label="Notify Me Before Due Date">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-          {NOTIF_OPTIONS.map(({ label, value }) => (
-            <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: theme.text, cursor: 'pointer', WebkitUserSelect: 'none' as never }}>
-              <input type="checkbox" checked={leadTimes.has(value)} onChange={() => toggleLead(value)}
-                style={{ accentColor: theme.checkboxAccent }} />
-              {label}
-            </label>
-          ))}
+      {/* Hide old overdue toggle */}
+      <div className="glass-inset rounded-xl p-3 overflow-hidden flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <EyeOff className="w-4 h-4 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <div className="text-sm font-medium">Hide old overdue</div>
+            <div className="text-[11px] text-muted-foreground leading-snug">Auto-hide assignments overdue by more than 24h</div>
+          </div>
         </div>
-      </Section>
+        <button
+          role="switch" aria-checked={hideOldOverdue}
+          onClick={() => onToggleHideOldOverdue(!hideOldOverdue)}
+          style={{
+            flexShrink: 0,
+            width: 40,
+            height: 24,
+            background: hideOldOverdue ? 'hsl(212 90% 60%)' : 'hsl(0 0% 100% / 0.15)',
+          }}
+          className="relative rounded-full transition-colors overflow-hidden"
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${hideOldOverdue ? 'translate-x-4' : 'translate-x-0'}`}
+          />
+        </button>
+      </div>
 
+      {/* Notifications */}
+      <div className="glass-inset rounded-xl p-3 flex items-start gap-3">
+        <Bell className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium mb-2">Notify before due date</div>
+          <div className="flex flex-col gap-1.5">
+            {NOTIF_OPTIONS.map(({ label, value }) => (
+              <label key={value} className="flex items-center gap-2 text-xs text-foreground cursor-pointer select-none">
+                <input type="checkbox" checked={leadTimes.has(value)} onChange={() => toggleLead(value)} className="accent-primary" />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Courses */}
       {localCourses.length > 0 && (
-        <Section label="Courses">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className="flex flex-col gap-2">
+          <label className="text-xs uppercase tracking-wider text-muted-foreground">Courses</label>
+          <div className="flex flex-col gap-2">
             {localCourses.map(c => (
-              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label style={{ position: 'relative', cursor: 'pointer', flexShrink: 0 }}>
-                  <div style={{ width: 14, height: 14, borderRadius: '50%', background: c.color, border: `1.5px solid ${theme.border}`, cursor: 'pointer' }} />
+              <div key={c.id} className="flex items-center gap-3">
+                <label className="relative cursor-pointer shrink-0">
+                  <div className="w-4 h-4 rounded-full border border-white/20" style={{ background: c.color }} />
                   <input type="color" value={c.color}
                     onChange={e => setLocalCourses(prev => prev.map(x => x.id === c.id ? { ...x, color: e.target.value } : x))}
-                    style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }} tabIndex={-1} />
+                    className="absolute opacity-0 w-0 h-0 pointer-events-none" tabIndex={-1}
+                  />
                 </label>
-                <span style={{ flex: 1, fontSize: 12, color: c.hidden ? theme.textFaint : theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {c.name}
-                </span>
+                <span className={`flex-1 text-xs truncate ${c.hidden ? 'text-muted-foreground/40' : 'text-foreground'}`}>{c.name}</span>
                 <button
                   onClick={() => setLocalCourses(prev => prev.map(x => x.id === c.id ? { ...x, hidden: !x.hidden } : x))}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: c.hidden ? theme.textFaint : theme.textMuted, padding: 0, lineHeight: 1 }}
-                  title={c.hidden ? 'Show' : 'Hide'}
+                  className="text-xs text-muted-foreground hover:text-foreground" title={c.hidden ? 'Show' : 'Hide'}
                 >
                   {c.hidden ? '○' : '●'}
                 </button>
               </div>
             ))}
           </div>
-          <div style={{ fontSize: 10, color: theme.sectionLabel, marginTop: 6 }}>Course colors apply on next sync</div>
-        </Section>
+          <p className="text-[11px] text-muted-foreground">Course colors apply on next sync</p>
+        </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button onClick={onClose} style={{ flex: 1, ...sb('#9ca3af') }}>Cancel</button>
-        <button onClick={handleSave} disabled={saving} style={{ flex: 2, ...sb('#3b82f6') }}>
-          {saving ? 'Saving…' : 'Save'}
+      {/* Save */}
+      <button
+        onClick={handleSave} disabled={saving}
+        className="rounded-xl py-2.5 px-4 font-medium text-primary-foreground flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50 mt-2"
+        style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-glow)' }}
+      >
+        <Save className="w-4 h-4" />
+        {saving ? 'Saving…' : 'Save & Sync'}
+      </button>
+    </div>
+  )
+}
+
+// ── Add Task Form ─────────────────────────────────────────────────────────────
+
+function AddTaskForm({ onAdd, onCancel }: { onAdd: (title: string, dueAt: string) => void; onCancel: () => void }) {
+  const [title, setTitle] = useState('')
+  const [dueAt, setDueAt] = useState('')
+  const submit = () => { if (title.trim()) onAdd(title.trim(), dueAt) }
+  return (
+    <div className="px-4 py-3 border-t border-white/5 flex flex-col gap-2 shrink-0">
+      <input autoFocus type="text" placeholder="Task title" value={title}
+        onChange={e => setTitle(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel() }}
+        className="w-full glass-inset rounded-xl px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-primary/50"
+      />
+      <input type="datetime-local" value={dueAt} onChange={e => setDueAt(e.target.value)}
+        style={{ colorScheme: 'dark' }}
+        className="w-full glass-inset rounded-xl px-3 py-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+      />
+      <div className="flex gap-2">
+        <button onClick={onCancel} className="flex-1 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors">Cancel</button>
+        <button onClick={submit} disabled={!title.trim()} className="flex-1 py-1.5 rounded-lg text-xs font-medium text-primary-foreground disabled:opacity-40"
+          style={{ background: title.trim() ? 'var(--gradient-primary)' : undefined }}>
+          Add Task
         </button>
       </div>
     </div>
@@ -615,34 +388,37 @@ const SETTINGS_DEFAULTS: Settings = {
   lookaheadDays: 14,
   notificationLeadTimes: [1440, 120, 30],
   onboardingComplete: true,
+  hideOldOverdue: true,
 }
 
 export default function Panel() {
-  const scheme = useColorScheme()
-  const theme = scheme === 'dark' ? DARK : LIGHT
-
-  const [assignments, setAssignments] = useState<Assignment[]>([])
-  const [syncState, setSyncState]     = useState<SyncState>({ status: 'idle', lastSyncAt: null })
-  const [settings, setSettings]       = useState<Settings>(SETTINGS_DEFAULTS)
-  const [courses, setCourses]         = useState<Course[]>([])
-  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
+  const [assignments, setAssignments]     = useState<Assignment[]>([])
+  const [syncState, setSyncState]         = useState<SyncState>({ status: 'idle', lastSyncAt: null })
+  const [settings, setSettings]           = useState<Settings>(SETTINGS_DEFAULTS)
+  const [courses, setCourses]             = useState<Course[]>([])
+  const [completedIds, setCompletedIds]   = useState<Set<string>>(new Set())
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([])
-  const [showSettings, setShowSettings] = useState(false)
-  const [activeFilter, setActiveFilter] = useState<string | null>(null)
-  const [showAddTask, setShowAddTask]   = useState(false)
-  const [showOldOverdue, setShowOldOverdue] = useState(false)
+  const [showSettings, setShowSettings]   = useState(false)
+  const [tab, setTab]                     = useState<'assignments' | 'courses'>('assignments')
+  const [selectedCourse, setSelectedCourse] = useState<string | null>(null)
+  const [hideOldOverdue, setHideOldOverdue] = useState(true)
+  const [showAddTask, setShowAddTask]     = useState(false)
 
-  // ── Initial load ───────────────────────────────────────────────────────────
+  // ── Initial load ─────────────────────────────────────────────────────────
   useEffect(() => {
     window.ipcRenderer.invoke('assignments:get').then((d: unknown) => setAssignments(d as Assignment[]))
     window.ipcRenderer.invoke('sync:status:get').then((s: unknown) => setSyncState(s as SyncState))
-    window.ipcRenderer.invoke('settings:get').then((s: unknown) => setSettings({ ...SETTINGS_DEFAULTS, ...(s as Settings) }))
+    window.ipcRenderer.invoke('settings:get').then((s: unknown) => {
+      const loaded = { ...SETTINGS_DEFAULTS, ...(s as Settings) }
+      setSettings(loaded)
+      setHideOldOverdue(loaded.hideOldOverdue ?? true)
+    })
     window.ipcRenderer.invoke('courses:get').then((c: unknown) => setCourses(c as Course[]))
     window.ipcRenderer.invoke('completed:get').then((ids: unknown) => setCompletedIds(new Set(ids as string[])))
     window.ipcRenderer.invoke('tasks:get').then((t: unknown) => setPersonalTasks(t as PersonalTask[]))
   }, [])
 
-  // ── Push subscriptions ─────────────────────────────────────────────────────
+  // ── Push subscriptions ───────────────────────────────────────────────────
   useEffect(() => {
     const onData    = (_: unknown, d: Assignment[]) => setAssignments(d)
     const onStatus  = (_: unknown, s: SyncState)    => setSyncState(s)
@@ -666,7 +442,7 @@ export default function Panel() {
     }
   }, [])
 
-  // ── Actions ────────────────────────────────────────────────────────────────
+  // ── Actions ──────────────────────────────────────────────────────────────
   const triggerSync = useCallback(() => window.ipcRenderer.send('sync:trigger'), [])
 
   const saveSettings = useCallback(async (patch: Partial<Settings>, updatedCourses?: Course[]) => {
@@ -695,205 +471,259 @@ export default function Panel() {
     setShowAddTask(false)
   }, [personalTasks])
 
-  const handleDeleteTask = useCallback(async (id: string) => {
-    const updated = personalTasks.filter(t => t.id !== id)
-    const saved = await window.ipcRenderer.invoke('tasks:save', updated) as PersonalTask[]
-    setPersonalTasks(saved)
-    if (completedIds.has(id)) {
-      const updatedIds = await window.ipcRenderer.invoke('completed:toggle', id) as string[]
-      setCompletedIds(new Set(updatedIds))
-    }
-  }, [personalTasks, completedIds])
+  // ── Derived data ─────────────────────────────────────────────────────────
+  const personalAssignments = useMemo(() => personalTasks.map(personalToAssignment), [personalTasks])
+  const hiddenCourseIds = useMemo(() => new Set(courses.filter(c => c.hidden).map(c => c.id)), [courses])
 
-  // ── Derived data ───────────────────────────────────────────────────────────
-  const personalAssignments = personalTasks.map(personalToAssignment)
-  const hiddenCourseIds = new Set(courses.filter(c => c.hidden).map(c => c.id))
+  const visibleAssignments = useMemo(() => {
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000
+    return [...assignments, ...personalAssignments].filter(a => {
+      if (completedIds.has(a.id)) return false
+      if (hiddenCourseIds.has(a.courseId)) return false
+      if (hideOldOverdue && a.dueAt && new Date(a.dueAt).getTime() < oneDayAgo) return false
+      return true
+    })
+  }, [assignments, personalAssignments, completedIds, hiddenCourseIds, hideOldOverdue])
 
-  const allVisible = [...assignments, ...personalAssignments].filter(a =>
-    !hiddenCourseIds.has(a.courseId) && !completedIds.has(a.id) &&
-    (activeFilter === null || a.courseId === activeFilter),
+  const overdueIds = useMemo(
+    () => visibleAssignments.filter(a => a.isOverdue).map(a => a.id),
+    [visibleAssignments],
   )
 
-  const bucketed = bucketAssignments(allVisible)
+  const groups = useMemo(() => groupAssignments(visibleAssignments), [visibleAssignments])
 
-  // Split overdue into recent (≤3 days past) and old (>3 days past)
-  const threeDaysAgo = new Date(); threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
-  const recentOverdue = bucketed.overdue.filter(a => !a.dueAt || new Date(a.dueAt) >= threeDaysAgo)
-  const oldOverdue    = bucketed.overdue.filter(a => a.dueAt && new Date(a.dueAt) < threeDaysAgo)
+  const courseList = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; total: number; overdue: number; upcoming: number }>()
+    const now = Date.now()
+    for (const a of visibleAssignments) {
+      const entry = map.get(a.courseId) ?? { id: a.courseId, name: a.courseName, total: 0, overdue: 0, upcoming: 0 }
+      entry.total += 1
+      if (a.dueAt) {
+        if (new Date(a.dueAt).getTime() < now) entry.overdue += 1
+        else entry.upcoming += 1
+      }
+      map.set(a.courseId, entry)
+    }
+    return [...map.values()].sort((a, b) => b.total - a.total)
+  }, [visibleAssignments])
 
-  const completedList = [...assignments, ...personalAssignments].filter(a => completedIds.has(a.id))
+  const courseCount = courseList.length
+  const upcomingCount = useMemo(
+    () => visibleAssignments.filter(a => a.dueAt && !a.isOverdue && new Date(a.dueAt) > new Date()).length,
+    [visibleAssignments],
+  )
 
-  const overdueCount = bucketed.overdue.length
-  const todayCount   = bucketed.today.length
-  const badgeCount   = overdueCount + todayCount
-  const totalCount   = Object.values(bucketed).reduce((s, arr) => s + arr.length, 0)
+  const courseAssignments = useMemo(() => {
+    if (!selectedCourse) return []
+    return visibleAssignments.filter(a => a.courseId === selectedCourse)
+  }, [visibleAssignments, selectedCourse])
 
-  const syncColor = syncState.status === 'syncing' ? '#3b82f6' : syncState.status === 'error' ? '#ef4444' : 'transparent'
+  const courseGroups = useMemo(() => groupAssignments(courseAssignments), [courseAssignments])
 
-  const rowProps = { onComplete: handleToggleComplete }
-  const personalRowProps = { ...rowProps, onDelete: handleDeleteTask }
+  const handleToggleHideOldOverdue = useCallback(async (v: boolean) => {
+    setHideOldOverdue(v)
+    await window.ipcRenderer.invoke('settings:set', { hideOldOverdue: v })
+  }, [])
 
+  // Change 4: clear ALL overdue at once
+  const clearOverdue = useCallback(async () => {
+    for (const id of overdueIds) await handleToggleComplete(id)
+  }, [overdueIds, handleToggleComplete])
+
+  const loading = syncState.status === 'syncing'
+  const lastFetched = syncState.lastSyncAt ? new Date(syncState.lastSyncAt) : null
+
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <ThemeCtx.Provider value={theme}>
-      <div style={{
-        width: '100%', height: '100vh',
-        display: 'flex', flexDirection: 'column',
-        background: theme.bg,
-        backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, sans-serif',
-        WebkitUserSelect: 'none', userSelect: 'none',
-        overflow: 'hidden', borderRadius: 12,
-      }}>
+    <div className="h-screen w-screen aurora" style={{ WebkitUserSelect: 'none', userSelect: 'none' }}>
+      <div className="glass relative w-full h-full flex flex-col overflow-hidden">
 
-        {/* ── Header ── */}
-        <div style={{
-          display: 'flex', alignItems: 'center',
-          padding: '11px 14px 9px',
-          borderBottom: showSettings || courses.length === 0 ? `1px solid ${theme.border}` : 'none',
-          flexShrink: 0,
-        }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: theme.text, letterSpacing: -0.2 }}>
-            {showSettings ? 'Settings' : 'Canvas Dashboard'}
-          </span>
-
-          {!showSettings && badgeCount > 0 && (
-            <span style={{
-              marginLeft: 7, background: overdueCount > 0 ? '#ef4444' : '#f97316',
-              color: '#fff', borderRadius: 10, fontSize: 10, fontWeight: 700, padding: '1px 6px', lineHeight: 1.4,
-            }}>
-              {badgeCount}
-            </span>
-          )}
-
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-            {!showSettings && syncState.status !== 'idle' && (
-              <span style={{ fontSize: 11, color: syncColor }}>
-                {syncState.status === 'syncing' ? '↻' : '⚠'}
-              </span>
-            )}
-            <button
-              onClick={() => setShowSettings(v => !v)}
-              title={showSettings ? 'Close settings' : 'Settings'}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, color: showSettings ? '#3b82f6' : theme.textFaint, padding: 0, lineHeight: 1 }}
-            >
-              {showSettings ? '✕' : '⚙'}
-            </button>
-          </div>
-        </div>
-
-        {/* ── Body ── */}
-        {showSettings ? (
-          <SettingsPanel settings={settings} courses={courses} onSave={saveSettings} onClose={() => setShowSettings(false)} />
-        ) : (
-          <>
-            {/* Course filter tabs */}
-            {!showAddTask && (
-              <CourseFilterTabs courses={courses} activeFilter={activeFilter} onSelect={setActiveFilter} />
-            )}
-
-            {/* Add task form */}
-            {showAddTask && <AddTaskForm onAdd={handleAddTask} onCancel={() => setShowAddTask(false)} />}
-
-            {/* Assignment list */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
-              {totalCount === 0 && completedList.length === 0 ? (
-                <div style={{ padding: '28px 14px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 22, marginBottom: 6 }}>🎉</div>
-                  <div style={{ fontSize: 13, color: theme.text, fontWeight: 500 }}>All clear!</div>
-                  <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 4 }}>
-                    {syncState.status === 'error'
-                      ? `Sync error: ${syncState.error ?? 'unknown'}`
-                      : 'No upcoming assignments found.'}
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {/* Overdue bucket — with old-overdue collapse */}
-                  {(recentOverdue.length > 0 || oldOverdue.length > 0) && (
-                    <div style={{ marginBottom: 4 }}>
-                      <SectionHeader label="Overdue" color="#ef4444" count={bucketed.overdue.length} />
-                      {recentOverdue.map(a => (
-                        <AssignmentRow key={a.id} a={a} {...(a.source === 'manual' ? personalRowProps : rowProps)} />
-                      ))}
-                      {oldOverdue.length > 0 && !showOldOverdue && (
-                        <button
-                          onClick={() => setShowOldOverdue(true)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: theme.textMuted, padding: '3px 14px', textAlign: 'left', width: '100%' }}
-                        >
-                          + {oldOverdue.length} older item{oldOverdue.length !== 1 ? 's' : ''}…
-                        </button>
-                      )}
-                      {showOldOverdue && oldOverdue.map(a => (
-                        <AssignmentRow key={a.id} a={a} {...(a.source === 'manual' ? personalRowProps : rowProps)} />
-                      ))}
-                      {showOldOverdue && oldOverdue.length > 0 && (
-                        <button
-                          onClick={() => setShowOldOverdue(false)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: theme.textMuted, padding: '3px 14px', textAlign: 'left', width: '100%' }}
-                        >
-                          Hide older items
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Other buckets */}
-                  {BUCKET_META.filter(m => m.key !== 'overdue').map(({ key, label, color }) => {
-                    const items = bucketed[key]
-                    if (items.length === 0) return null
-                    return (
-                      <div key={key} style={{ marginBottom: 4 }}>
-                        <SectionHeader label={label} color={color} count={items.length} />
-                        {items.map(a => (
-                          <AssignmentRow key={a.id} a={a} {...(a.source === 'manual' ? personalRowProps : rowProps)} />
-                        ))}
-                      </div>
-                    )
-                  })}
-
-                  <CompletedSection items={completedList} onUnmark={handleToggleComplete} />
-                </>
-              )}
+        {/* ── Header — changes when settings is open ── */}
+        <header className="px-5 pt-5 pb-3 flex items-center justify-between border-b border-white/5 shrink-0">
+          {showSettings ? (
+            /* Settings header: back arrow + title */
+            <div className="flex items-center gap-2 w-full">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <h2 className="text-base font-semibold">Settings</h2>
             </div>
-
-            {/* ── Footer ── */}
-            <div style={{
-              borderTop: `1px solid ${theme.border}`,
-              padding: '7px 14px',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              flexShrink: 0,
-            }}>
-              <span style={{ fontSize: 10, color: theme.textFaint }}>
-                {formatLastSync(syncState.lastSyncAt)}
-              </span>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <button
-                  onClick={() => setShowAddTask(v => !v)}
-                  title="Add personal task"
-                  style={{
-                    fontSize: 15, padding: '2px 7px',
-                    background: 'none', border: `1px solid ${theme.border}`,
-                    borderRadius: 5, cursor: 'pointer', color: showAddTask ? '#3b82f6' : theme.textMuted, fontWeight: 600,
-                  }}
-                >+</button>
+          ) : (
+            /* Normal header */
+            <>
+              <div>
+                <h1 className="text-lg font-semibold text-gradient">Canvas</h1>
+                <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1">
+                    <BookOpen className="w-3 h-3" /> {courseCount} courses
+                  </span>
+                  <span className="opacity-30">·</span>
+                  <span className="inline-flex items-center gap-1">
+                    <Inbox className="w-3 h-3" /> {upcomingCount} upcoming
+                  </span>
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
                 <button
                   onClick={triggerSync}
-                  disabled={syncState.status === 'syncing'}
-                  style={{
-                    fontSize: 11, padding: '3px 9px',
-                    background: 'none', border: `1px solid ${theme.border}`,
-                    borderRadius: 5, cursor: syncState.status === 'syncing' ? 'default' : 'pointer',
-                    color: theme.textMuted, fontWeight: 500,
-                    opacity: syncState.status === 'syncing' ? 0.5 : 1,
-                  }}
+                  disabled={loading}
+                  className="p-2 rounded-lg hover:bg-white/5 transition-colors disabled:opacity-40"
+                  title="Refresh"
                 >
-                  {syncState.status === 'syncing' ? 'Syncing…' : '↻ Refresh'}
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                </button>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="p-2 rounded-lg hover:bg-white/5 transition-colors"
+                  title="Settings"
+                >
+                  <SettingsIcon className="w-4 h-4" />
                 </button>
               </div>
-            </div>
-          </>
+            </>
+          )}
+        </header>
+
+        {/* ── Tabs (hidden in settings) ── */}
+        {!showSettings && visibleAssignments.length > 0 && (
+          <div className="px-4 pt-3 flex items-center gap-1 shrink-0">
+            <TabButton active={tab === 'assignments'} onClick={() => { setTab('assignments'); setSelectedCourse(null) }}>
+              Assignments
+            </TabButton>
+            <TabButton active={tab === 'courses'} onClick={() => { setTab('courses'); setSelectedCourse(null) }}>
+              Courses <span className="ml-1 text-[10px] opacity-60">{courseCount}</span>
+            </TabButton>
+          </div>
         )}
+
+        {/* ── Body — AnimatePresence switches between settings and main ── */}
+        <AnimatePresence mode="wait" initial={false}>
+          {showSettings ? (
+            /* Change 2: Settings as an animated in-place page */
+            <motion.div
+              key="settings"
+              initial={{ x: 24, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -24, opacity: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="flex-1 overflow-y-auto"
+            >
+              <SettingsPanel
+                settings={settings}
+                courses={courses}
+                hideOldOverdue={hideOldOverdue}
+                onToggleHideOldOverdue={handleToggleHideOldOverdue}
+                onSave={saveSettings}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="main"
+              initial={{ x: -24, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 24, opacity: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="flex-1 overflow-y-auto"
+            >
+              {visibleAssignments.length === 0 ? (
+                <EmptyState />
+              ) : tab === 'assignments' ? (
+                <GroupedList groups={groups} completed={completedIds} onToggle={handleToggleComplete} />
+              ) : selectedCourse ? (
+                /* Course drill-down */
+                <div className="p-4 flex flex-col gap-3">
+                  <button
+                    onClick={() => setSelectedCourse(null)}
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors w-fit"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" /> All courses
+                  </button>
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">
+                      {courseList.find(c => c.id === selectedCourse)?.name ?? ''}
+                    </h2>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      {courseAssignments.length} assignment{courseAssignments.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  {courseAssignments.length === 0 ? (
+                    <div className="text-xs text-muted-foreground py-6 text-center">No assignments.</div>
+                  ) : (
+                    <GroupedList groups={courseGroups} completed={completedIds} onToggle={handleToggleComplete} compact />
+                  )}
+                </div>
+              ) : (
+                /* Course list */
+                <div className="p-4 flex flex-col gap-2">
+                  {courseList.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => setSelectedCourse(c.id)}
+                      className="glass-inset rounded-xl p-3 flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
+                    >
+                      <div
+                        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                        style={{ background: 'var(--gradient-primary)' }}
+                      >
+                        <BookOpen className="w-4 h-4 text-primary-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">{c.name}</div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2">
+                          <span>{c.total} total</span>
+                          {c.overdue > 0 && (<><span className="opacity-30">·</span><span style={{ color: 'hsl(var(--danger))' }}>{c.overdue} overdue</span></>)}
+                          {c.upcoming > 0 && (<><span className="opacity-30">·</span><span>{c.upcoming} upcoming</span></>)}
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Add Task Form (hidden in settings) */}
+        {!showSettings && showAddTask && (
+          <AddTaskForm onAdd={handleAddTask} onCancel={() => setShowAddTask(false)} />
+        )}
+
+        {/* ── Footer (hidden in settings) ── */}
+        {!showSettings && (
+          <footer className="px-5 py-2.5 border-t border-white/5 text-[10px] text-muted-foreground flex items-center justify-between gap-2 shrink-0">
+            <span className="truncate">
+              {lastFetched
+                ? `Updated ${formatDistanceToNowStrict(lastFetched, { addSuffix: true })}`
+                : 'Not synced'}
+            </span>
+            <div className="flex items-center gap-1 shrink-0">
+              {/* Change 4: Clear overdue button — exactly like canvas-companion */}
+              {overdueIds.length > 0 && (
+                <button
+                  onClick={clearOverdue}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/5 transition-colors text-foreground/80"
+                  title="Mark all overdue as done"
+                >
+                  <CheckCheck className="w-3 h-3" />
+                  Clear {overdueIds.length} overdue
+                </button>
+              )}
+              <button
+                onClick={() => setShowAddTask(v => !v)}
+                className={`p-1 rounded-md hover:bg-white/5 transition-colors ${showAddTask ? 'text-primary' : ''}`}
+                title="Add personal task"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </footer>
+        )}
+
       </div>
-    </ThemeCtx.Provider>
+    </div>
   )
 }
