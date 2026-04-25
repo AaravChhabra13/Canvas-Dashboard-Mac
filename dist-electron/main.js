@@ -33558,6 +33558,19 @@ function setupIPC(win, callbacks) {
     "token:validate",
     (_event, baseUrl, token) => validateToken(baseUrl, token)
   );
+  electron.ipcMain.handle("cookie:save", async (_event, cookie) => {
+    const current = getSettings();
+    store.set("settings", { ...current, canvasSessionCookie: cookie });
+    await runSync(win, callbacks);
+    return true;
+  });
+  electron.ipcMain.handle("cookie:check", () => !!getSettings().canvasSessionCookie);
+  electron.ipcMain.handle("cookie:clear", async () => {
+    const current = getSettings();
+    store.set("settings", { ...current, canvasSessionCookie: "" });
+    await runSync(win, callbacks);
+    return true;
+  });
   electron.ipcMain.handle("courses:get", () => store.get("courses"));
   electron.ipcMain.handle("courses:save", (_event, courses) => {
     store.set("courses", courses);

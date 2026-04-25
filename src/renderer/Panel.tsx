@@ -133,8 +133,10 @@ function SettingsPanel({
 }) {
   const [baseUrl, setBaseUrl] = useState(settings.canvasBaseUrl)
   const [icalUrl, setIcalUrl] = useState(settings.canvasIcalUrl)
-  const [cookie, setCookie] = useState(settings.canvasSessionCookie)
+  const [cookieInput, setCookieInput] = useState('')
   const [showCookie, setShowCookie] = useState(false)
+  const [hasCookie, setHasCookie] = useState(false)
+  const [cookieSaving, setCookieSaving] = useState(false)
   const [interval, setInterval] = useState(settings.syncIntervalMinutes)
   const [leadTimes, setLeadTimes] = useState(new Set(settings.notificationLeadTimes))
   const [localCourses, setLocalCourses] = useState<Course[]>(courses)
@@ -147,6 +149,7 @@ function SettingsPanel({
 
   useEffect(() => {
     window.ipcRenderer.invoke('token:check').then((v: unknown) => setHasExistingToken(v as boolean))
+    window.ipcRenderer.invoke('cookie:check').then((v: unknown) => setHasCookie(v as boolean))
   }, [])
   useEffect(() => { setLocalCourses(courses) }, [courses])
 
@@ -170,13 +173,26 @@ function SettingsPanel({
     setHasExistingToken(false); setTokenStatus('idle')
   }
 
+  async function handleSaveCookie() {
+    if (!cookieInput.trim()) return
+    setCookieSaving(true)
+    await window.ipcRenderer.invoke('cookie:save', cookieInput.trim())
+    setHasCookie(true)
+    setCookieInput('')
+    setCookieSaving(false)
+  }
+
+  async function handleClearCookie() {
+    await window.ipcRenderer.invoke('cookie:clear')
+    setHasCookie(false)
+  }
+
   async function handleSave() {
     setSaving(true)
     await onSave(
       {
         canvasBaseUrl: baseUrl.trim() || 'https://canvas.uw.edu',
         canvasIcalUrl: icalUrl.trim(),
-        canvasSessionCookie: cookie.trim(),
         syncIntervalMinutes: interval,
         notificationLeadTimes: [...leadTimes],
       },
@@ -244,19 +260,33 @@ function SettingsPanel({
 
       {/* Session Cookie */}
       <div className="flex flex-col gap-2">
-        <label className="text-xs uppercase tracking-wider text-muted-foreground">Session Cookie (GraphQL)</label>
-        <div className="relative">
-          <input type={showCookie ? 'text' : 'password'} value={cookie}
-            onChange={e => setCookie(e.target.value)}
-            placeholder="Paste Cookie header value" spellCheck={false} className={`${inputCls} pr-12`}
-          />
-          <button onClick={() => setShowCookie(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground hover:text-foreground">
-            {showCookie ? 'Hide' : 'Show'}
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          DevTools → Network → any Canvas request → Request Headers → Cookie
-        </p>
+        <label className="text-xs uppercase tracking-wider text-muted-foreground">UW Students (Session Cookie)</label>
+        {hasCookie ? (
+          <div className="flex items-center gap-3">
+            <span className="text-xs flex-1" style={{ color: 'hsl(var(--success))' }}>✓ Cookie saved — using GraphQL</span>
+            <button onClick={handleClearCookie} className="text-xs px-3 py-1.5 rounded-lg glass-inset hover:bg-white/5 transition-colors" style={{ color: 'hsl(var(--danger))' }}>Clear</button>
+          </div>
+        ) : (
+          <>
+            <div className="relative">
+              <input type={showCookie ? 'text' : 'password'} value={cookieInput}
+                onChange={e => setCookieInput(e.target.value)}
+                placeholder="Paste Cookie header value" spellCheck={false} className={`${inputCls} pr-12`}
+              />
+              <button onClick={() => setShowCookie(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground hover:text-foreground">
+                {showCookie ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              No cookie — using iCal feed. Get this from Chrome DevTools → Network → any Canvas request → Cookie header
+            </p>
+            <button onClick={handleSaveCookie} disabled={!cookieInput.trim() || cookieSaving}
+              className="text-xs py-2 rounded-xl font-medium text-primary-foreground disabled:opacity-40 transition-opacity"
+              style={{ background: 'var(--gradient-primary)' }}>
+              {cookieSaving ? 'Saving…' : 'Save Cookie'}
+            </button>
+          </>
+        )}
       </div>
 
       {/* Auto-sync interval */}
@@ -495,17 +525,19 @@ export default function Panel() {
   const courseList = useMemo(() => {
     const map = new Map<string, { id: string; name: string; total: number; overdue: number; upcoming: number }>()
     const now = Date.now()
-    for (const a of visibleAssignments) {
+    for (const a of [...assignments, ...personalAssignments]) {
+      if (hiddenCourseIds.has(a.courseId)) continue
       const entry = map.get(a.courseId) ?? { id: a.courseId, name: a.courseName, total: 0, overdue: 0, upcoming: 0 }
       entry.total += 1
       if (a.dueAt) {
-        if (new Date(a.dueAt).getTime() < now) entry.overdue += 1
-        else entry.upcoming += 1
+        const t = new Date(a.dueAt).getTime()
+        if (t < now && !completedIds.has(a.id)) entry.overdue += 1
+        else if (t > now) entry.upcoming += 1
       }
       map.set(a.courseId, entry)
     }
     return [...map.values()].sort((a, b) => b.total - a.total)
-  }, [visibleAssignments])
+  }, [assignments, personalAssignments, completedIds, hiddenCourseIds])
 
   const courseCount = courseList.length
   const upcomingCount = useMemo(

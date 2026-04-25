@@ -155,6 +155,21 @@ export function setupIPC(
     validateToken(baseUrl, token),
   )
 
+  // ── Session cookie ────────────────────────────────────────────────────────
+  ipcMain.handle('cookie:save', async (_event, cookie: string) => {
+    const current = getSettings()
+    store.set('settings', { ...current, canvasSessionCookie: cookie })
+    await runSync(win, callbacks)
+    return true
+  })
+  ipcMain.handle('cookie:check', () => !!getSettings().canvasSessionCookie)
+  ipcMain.handle('cookie:clear', async () => {
+    const current = getSettings()
+    store.set('settings', { ...current, canvasSessionCookie: '' })
+    await runSync(win, callbacks)
+    return true
+  })
+
   // ── Courses ───────────────────────────────────────────────────────────────
   ipcMain.handle('courses:get', () => store.get('courses') as Course[])
   ipcMain.handle('courses:save', (_event, courses: Course[]) => {
