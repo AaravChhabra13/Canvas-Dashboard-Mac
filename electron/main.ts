@@ -3,6 +3,18 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { setupIPC, isOnboarded } from './ipc'
 
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+  process.exit(0)
+}
+app.on('second-instance', () => {
+  if (panel) {
+    showPanel()
+    panel.focus()
+  }
+})
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 process.env.APP_ROOT = path.join(__dirname, '..')
@@ -62,10 +74,6 @@ function createPanel(): void {
 
   if (VITE_DEV_SERVER_URL) {
     panel.loadURL(VITE_DEV_SERVER_URL)
-    panel.once('ready-to-show', () => {
-      panel?.show()
-      panel?.webContents.openDevTools({ mode: 'detach' })
-    })
   } else {
     panel.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }
