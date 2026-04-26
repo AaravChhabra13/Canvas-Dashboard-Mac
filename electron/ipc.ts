@@ -42,6 +42,8 @@ export function isOnboarded(): boolean {
 export interface SetupIPCCallbacks {
   showPanel: () => void
   closeOnboarding: () => void
+  openOnboarding: () => void
+  hidePanel: () => void
   onBadgeUpdate: (overdue: number, today: number) => void
 }
 
@@ -216,6 +218,14 @@ export function setupIPC(
     callbacks.showPanel()
     await runSync(win, callbacks)
     startSyncTimer(win, callbacks)
+    return true
+  })
+
+  ipcMain.handle('onboarding:reopen', async () => {
+    const current = getSettings()
+    store.set('settings', { ...current, onboardingComplete: false })
+    callbacks.hidePanel()
+    callbacks.openOnboarding()
     return true
   })
 

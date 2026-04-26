@@ -80,10 +80,15 @@ function createPanel(): void {
   })
 }
 
+function openOnboardingWindow(): void {
+  if (onboardingWin) { onboardingWin.close(); onboardingWin = null }
+  createOnboardingWindow()
+}
+
 function createOnboardingWindow(): void {
   onboardingWin = new BrowserWindow({
     width: 560,
-    height: 480,
+    height: 600,
     show: false,
     frame: false,
     resizable: false,
@@ -164,6 +169,8 @@ app.whenReady().then(() => {
   const { triggerSync, isOnboardingComplete } = setupIPC(panel!, {
     showPanel: () => showPanel(),
     closeOnboarding: () => { onboardingWin?.close(); onboardingWin = null },
+    openOnboarding: () => openOnboardingWindow(),
+    hidePanel: () => panel?.hide(),
     onBadgeUpdate: (_overdue, today) => {
       currentToday = today
       updateTrayBadge()
@@ -171,7 +178,7 @@ app.whenReady().then(() => {
   })
 
   if (!isOnboardingComplete) {
-    createOnboardingWindow()
+    openOnboardingWindow()
   }
 
   powerMonitor.on('resume', () => {

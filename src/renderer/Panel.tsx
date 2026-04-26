@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   RefreshCw, Settings as SettingsIcon, BookOpen, Inbox,
-  CheckCheck, ChevronRight, ArrowLeft, Save, EyeOff, Bell, Plus,
+  CheckCheck, ChevronRight, ArrowLeft, Save, EyeOff, Bell, Plus, Plug,
 } from 'lucide-react'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { AssignmentItem } from './AssignmentItem'
@@ -451,6 +451,15 @@ function SettingsPanel({
       >
         <Save className="w-4 h-4" />
         {saving ? 'Saving…' : 'Save & Sync'}
+      </button>
+
+      {/* Change connection method */}
+      <button
+        onClick={() => window.ipcRenderer.invoke('onboarding:reopen')}
+        className="flex items-center justify-center gap-2 w-full py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors mt-1"
+      >
+        <Plug className="w-3.5 h-3.5" />
+        Change connection method
       </button>
     </div>
   )
